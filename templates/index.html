@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="pl">
+
+<head>
+    <meta charset="UTF-8">
+    <title>TEXT2NER</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css"> -->
+    <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/stackoverflow-light.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <style>
+        .entity-pers {
+            background-color: #e0e7ff;
+            border-bottom: 2px solid #4338ca;
+            cursor: help;
+            padding: 0 2px;
+        }
+
+        .entity-place {
+            background-color: #ffedd5;
+            border-bottom: 2px solid #ea580c;
+            cursor: help;
+            padding: 0 2px;
+        }
+
+        .entity-pers:hover {
+            background-color: #c7d2fe;
+        }
+
+        .entity-place:hover {
+            background-color: #fed7aa;
+        }
+    </style>
+</head>
+
+<body class="bg-gray-100 min-h-screen p-8">
+    <div class="max-w-5xl mx-auto bg-white rounded-xl shadow-md p-6">
+
+        <header class="mb-6 border-b pb-4 flex justify-between items-start">
+            <div>
+                <div class="flex items-center gap-3">
+                    <h1 class="text-4xl font-black text-gray-900 tracking-tight">TEXT2NER</h1>
+                    <span
+                        class="bg-blue-100 text-blue-700 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider shadow-sm">
+                        v1.1-beta
+                    </span>
+                </div>
+                <p class="text-sm text-gray-500 font-medium mt-1">
+                    Automatyczna konwersja dokumentów historycznych do formatu TEI-XML z identyfikacją encji
+                </p>
+            </div>
+
+            <button onclick="toggleHelp(true)" class="flex items-center gap-2 px-4 py-2 bg-green-600 text-white text-xs font-bold rounded-lg hover:bg-green-700 transition-colors shadow-sm">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                HELP
+            </button>
+        </header>
+
+        <div class="mb-6">
+            <label class="block text-sm font-medium text-gray-700 mb-2">Wklej tekst (max 5000 znaków):</label>
+            <div class="flex items-center gap-2 bg-gray-100 rounded-md p-1">
+                <span class="text-[10px] uppercase font-bold text-gray-500 px-1">Font</span>
+                <button onclick="changeFontSize(-2)"
+                    class="w-6 h-6 flex items-center justify-center bg-white border rounded shadow-sm hover:bg-gray-50 text-gray-600">-</button>
+                <button onclick="changeFontSize(2)"
+                    class="w-6 h-6 flex items-center justify-center bg-white border rounded shadow-sm hover:bg-gray-50 text-gray-600">+</button>
+            </div>
+            <textarea id="inputText" rows="14"
+                class="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none min-h-[400px]"
+                placeholder="Wprowadź tekst dokumentu..." spellcheck="false" maxlength="5000"
+                oninput="updateCharCount()"></textarea>
+
+            <div id="charCounter" class="text-right text-xs text-gray-400 mt-1">0/5000</div>
+
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-1">Wczytaj przykład:</label>
+                <select id="exampleSelector" onchange="loadExample()"
+                    class="w-full p-2 border rounded-lg bg-gray-50 text-sm outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="" disabled selected>Wybierz dokument z listy...</option>
+                    <option value="nr-1">Acta Alexandri Regis Poloniae Nr. 1</option>
+                    <option value="nr-3">Acta Alexandri Regis Poloniae Nr. 3</option>
+                    <option value="nr-10">Acta Alexandri Regis Poloniae Nr. 10</option>
+                </select>
+            </div>
+
+            <div class="mt-3 flex gap-2">
+                <button onclick="analyze()" id="btnAnalyze"
+                    class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition flex items-center">
+                    <span id="btnText">Analizuj tekst</span>
+                    <div id="spinner"
+                        class="hidden ml-2 w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin">
+                    </div>
+                </button>
+                <button onclick="clearAll()"
+                    class="bg-gray-200 text-gray-700 px-6 py-2 rounded-lg hover:bg-gray-300 transition">Wyczyść</button>
+            </div>
+        </div>
+
+        <div id="results" class="hidden space-y-6">
+            <div>
+                <div class="flex items-center mb-2">
+                    <h2 class="text-lg font-semibold text-gray-800">Wynik TEI-XML:</h2>
+
+                    <div class="flex ml-6 bg-gray-200 p-1 rounded-lg text-xs font-bold uppercase">
+                        <button onclick="switchTab('xml')" id="tab-xml"
+                            class="px-3 py-1.5 rounded-md bg-white shadow-sm text-blue-700">Kod XML</button>
+                        <button onclick="switchTab('preview')" id="tab-preview"
+                            class="px-3 py-1.5 rounded-md text-gray-500 hover:text-gray-700">Podgląd tekstu</button>
+                    </div>
+
+                    <div class="flex items-center gap-2 bg-gray-50 rounded-md p-1 ml-4 border border-gray-200">
+                        <span class="text-[10px] uppercase font-bold text-gray-400 px-1">Font</span>
+                        <button onclick="changeResultFontSize(-1)"
+                            class="w-5 h-5 flex items-center justify-center bg-white border rounded shadow-sm hover:bg-gray-100 text-gray-600 text-xs">-</button>
+                        <button onclick="changeResultFontSize(1)"
+                            class="w-5 h-5 flex items-center justify-center bg-white border rounded shadow-sm hover:bg-gray-100 text-gray-600 text-xs">+</button>
+                    </div>
+
+                    <div class="ml-auto flex gap-2">
+                        <button onclick="copyToClipboard()"
+                            class="text-sm bg-blue-100 text-blue-700 px-3 py-1.5 rounded-md hover:bg-blue-200 transition font-medium">
+                            Kopiuj XML
+                        </button>
+                        <button onclick="downloadXML()"
+                            class="text-sm bg-green-100 text-green-700 px-3 py-1.5 rounded-md hover:bg-green-200 transition font-medium">
+                            Pobierz plik *.xml
+                        </button>
+                    </div>
+                </div>
+
+                <div id="xml-container" class="block">
+                    <pre
+                        class="border border-gray-300 rounded-lg bg-white shadow-inner overflow-x-auto"><code id="xmlOutput" class="language-xml text-sm"></code></pre>
+                </div>
+
+                <div id="preview-container" class="hidden">
+                    <div id="textPreview"
+                        class="border border-gray-300 rounded-lg bg-white p-6 shadow-inner overflow-y-auto max-h-[600px] leading-relaxed text-gray-800">
+                    </div>
+                </div>
+
+            </div>
+
+            <div>
+                <h2 class="text-lg font-semibold mb-2 text-gray-800">Zidentyfikowane encje:</h2>
+                <div id="entityList" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="helpModal"
+        class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+        <div class="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div class="p-6 border-b flex justify-between items-center sticky top-0 bg-white">
+                <h3 class="text-xl font-bold text-gray-900">Instrukcja obsługi TEXT2NER</h3>
+                <button onclick="toggleHelp(false)" class="text-gray-400 hover:text-gray-600">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
+                        stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+            <div class="p-8 space-y-6 text-gray-700 leading-relaxed">
+                <section>
+                    <h4 class="font-bold text-blue-700 flex items-center gap-2 mb-2">
+                        <span class="bg-blue-100 w-6 h-6 rounded-full flex items-center justify-center text-xs">1</span>
+                        Wprowadzanie tekstu
+                    </h4>
+                    <p>Wklej tekst dokumentu historycznego do głównego pola (limit 5000 znaków). Możesz też użyć <strong>listy przykładów</strong>, widocznej pod polem.</p>
+                </section>
+
+                <section>
+                    <h4 class="font-bold text-blue-700 flex items-center gap-2 mb-2">
+                        <span class="bg-blue-100 w-6 h-6 rounded-full flex items-center justify-center text-xs">2</span>
+                        Analiza
+                    </h4>
+                    <p>Kliknij <strong>"Analizuj tekst"</strong>. System automatycznie
+                        przekonwertuje tekst na format TEI-XML i wyszuka encje w bazach Wikidata, WikiHum i GeoNames.</p>
+                </section>
+
+                <section class="bg-blue-50 p-4 rounded-lg border border-blue-100">
+                    <h4 class="font-bold text-blue-800 mb-1">Dwa widoki wyniku analizy:</h4>
+                    <ul class="list-disc ml-5 space-y-1">
+                        <li><strong>Kod XML:</strong> Podgląd struktury TEI-XML gotowy do zapisu.</li>
+                        <li><strong>Podgląd tekstu:</strong> Interaktywna lektura z dymkami (tooltips). Najedź myszą na
+                            osobę lub miejsce, by zobaczyć dane z baz zewnętrznych.</li>
+                    </ul>
+                </section>
+
+                <div class="mt-4 p-3 bg-white border rounded-lg flex gap-4 text-xs font-semibold">
+                    <div class="flex items-center gap-2">
+                        <span class="w-4 h-4 rounded bg-[#e0e7ff] border-b-2 border-[#4338ca]"></span>
+                        <span>Osoby (persName)</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="w-4 h-4 rounded bg-[#ffedd5] border-b-2 border-[#ea580c]"></span>
+                        <span>Miejsca (placeName)</span>
+                    </div>
+                </div>
+
+                <section>
+                    <h4 class="font-bold text-blue-700 flex items-center gap-2 mb-2">
+                        <span class="bg-blue-100 w-6 h-6 rounded-full flex items-center justify-center text-xs">3</span>
+                        Eksport danych
+                    </h4>
+                    <p>Wynik możesz skopiować do schowka lub pobrać jako plik <strong>.xml</strong>.</p>
+                </section>
+            </div>
+            <div class="p-6 border-t bg-gray-50 flex justify-end">
+                <button onclick="toggleHelp(false)"
+                    class="px-6 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 shadow-md">
+                    OK
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function analyze() {
+            const text = document.getElementById('inputText').value;
+            if (!text) return alert("Wklej tekst!");
+
+            // reset widoku: Wymuszamy powrót do zakładki XML
+            switchTab('xml');
+
+            // UI State: Loading
+            document.getElementById('btnAnalyze').disabled = true;
+            document.getElementById('spinner').classList.remove('hidden');
+            document.getElementById('btnText').innerText = "Trwa analiza...";
+
+            document.getElementById('results').classList.add('hidden');
+
+            try {
+                const response = await fetch('/process', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: text })
+                });
+                const data = await response.json();
+
+                // Display XML
+                const xmlCode = document.getElementById('xmlOutput');
+                xmlCode.textContent = data.xml;
+
+                delete xmlCode.dataset.highlighted;
+                hljs.highlightElement(xmlCode);
+
+                // Display Entities
+                const list = document.getElementById('entityList');
+                list.innerHTML = data.entities.map(e => `
+                    <div class="p-3 bg-gray-50 border rounded-lg">
+                        <span class="text-xs font-bold uppercase ${e.type === 'persName' ? 'text-purple-600' : 'text-orange-600'}">${e.type}</span>
+                        <p class="font-medium">${e.name}</p>
+                        <a href="${e.url}" target="_blank" class="text-sm text-blue-500 hover:underline break-all">${e.url}</a>
+                    </div>
+                `).join('');
+
+                document.getElementById('results').classList.remove('hidden');
+            } catch (err) {
+                alert("Błąd podczas analizy.");
+            } finally {
+                document.getElementById('btnAnalyze').disabled = false;
+                document.getElementById('spinner').classList.add('hidden');
+                document.getElementById('btnText').innerText = "Analizuj tekst";
+            }
+        }
+
+        function copyToClipboard() {
+            const code = document.getElementById('xmlOutput').textContent;
+            navigator.clipboard.writeText(code);
+            alert("Skopiowano do schowka!");
+        }
+
+        // funkcja zapisu (pobierania) pliku XML
+        function downloadXML() {
+            const xmlCode = document.getElementById('xmlOutput').textContent;
+
+            if (!xmlCode) return;
+
+            const blob = new Blob([xmlCode], { type: 'text/xml' });
+            const url = window.URL.createObjectURL(blob);
+
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = "document_tei.xml";
+            document.body.appendChild(a);
+            a.click();
+
+            // sprzątanie
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        }
+
+        const docExamples = {
+            "nr-1": `Fridericus cardinalis consiliariis regni Poloniae.
+
+Magnifice domine, amice noster dilecte! Ante biduum scripserant nobis domini consiliarii Regni, qui in Prussia sunt, de gravissima aegritudine sermi olim domini nostri, tamen de extremo fine vitae eius nihil significaverant, tantummodo vocabant nos, ut illuc accurreremus. Scripsissemus hanc ipsam novitatem iam tunc V. Mciae, sed voluimus expectare, ut aliquid certius illi significaremus. Nunc itaque hora vesperorum intelleximus, ipsum dominum nostrum diem clausisse extremum. Qui nunctius, sicut debuit, affecit nos dolore gravissimo, quem tamen, prout possumus et decet, conamur aequo animo tollerare et affectus nostros conformare divinae voluntati.
+
+Et quoniam sub huiusmodi casibus Respublica, orbata suo rectore, solet gravius periclitari, nos huc advocamus vicinos dominos consiliarios, consulturi cum eisdem. ut provideamus defensioni et tranquillitati harum terrarum. Et his peractis cum consilio eorundem dominorum, properare intendimus obviam funeri et sine mora cum eodem Cracoviam advenire.
+
+V. quoque Mciam summopere rogamus, ut hoc tempore, tam turbulento et periculoso, descendat Cracoviam et cum aliis dominis consiliariis istarum regionum, quibus nos scripsimus, ut similiter Cracoviam se conferrent, consulere velitis, quomodo partes Russiae et confinia istarum partium Regni in debita defensione constituantur, tum domesticae quoque tumultuationes, si quae essent, sopiantur, et de ceteris, quae necessaria erunt, communi consilio provideatis.
+
+Pecuniae vero, si quae ad talia procuranda interim, quoad simul conveniamus, necessariae erunt, V. Mcia cum ipsis dominis cooperetur, ut alicubi mutuo inveniri possint, quae deinde ex publico sine omni dubio cum gratia repellentur. Haec V. Mciam pro eo amore et fide, qua semper fuit erga Rempublicam, scimus et diligenter et amanter facturam.
+
+Ceterum obversatur nobis in animo, in quo sit moerore constituta reginalis Mtas; ideoque V. Mciam summopere rogamus, verbis et auctoritate, qua melius potest et intelligit, illam consolari assidue velit; tum autem haec, quae facienda pro Republica erunt, imprimis eiusdem Mtis consilio cum aliis dominis regat et disponat. Quae valeat feliciter et nos diligat. Datum...
+`,
+            "nr-3": `Unnsere gantzwillige unnd undertenige dinste sein ewren gnaden allezceit zcuvoran bereit. Hochwirdigister irluchter hochgeborner furste, gnediger unnd gnedigister herre.           
+
+Wir geben E. F. G. zcu erkennen, dasz der durchlüchste groszmechtigiste furste unnd herre her  Johannes Albertus , weylant konigk in  Polen  etc., nach dem willen desz almechtigen Gots seinen abeschiet von dieser werlt am dornstage desz achten tags unsers heyligen warenn leychnams, zcwischen IX und X horen, alhir zcu  Thorn  genomen, desz sele der almechtige Got gnedig und barmherzcigk sey; unnd alsz wir vornemen, so sal seine leyche kegin  Krokow  in kortz gefürt werden etc.
+
+Wir haben tegelich unser abfertünge oüch nach des koniges tode gewartet unnd vertrostunge gehabt die zcu erlangen, alsz ist hewte ein brieff von unserm g. unnd gsten hern dem cardinal an unsere herren unnd frunde und gnedige hern die bischove unnd andere rethe itzunt zcu  Thorn  versamelt komenn, der under andern meldet, dasz unser g. und gter her der cardinal sich uff morgen montagk zcu  Gnysen  zcu erheben willens sey unnd uffs forderlichste alher kein  Thorn  zcu komen, unnd versehenn unsz, dasz seine gnade uff mithwoche nhest alhir sein wirt. Dyweil dan derselbe seiner gnadenn brieff mit claren wortten anzceiget, dasz sie unsz bysz uff seiner gnaden zcukunfft sollen alhir erhalden, so werden wir mit unser anthwort daruff verzcogen, und hoffen, dasz unsz dieselbe uff nhest kunfftigen dornstagk gegeben werde. Unnd so balde wir abgefertiget, wollen wir E. G. zcuerkennen geben, uff waszc zceit wir hoffen zcu E. G. zcu komen. Wir versehen unsz ouch einesz merglichen rathes, nachdeme gereit vier bischove mit trefflichen rethen alhir zcu  Thorn  sein, deszgleichen wirt unser g. und gster herre der cardinal ouch etzliche bischove unnd mergliche leute mit sich brengen. Ewrn gnaden alsz unserm g. und gsten hern gantzwillige unnd undertenige dinste zcu erzceigen sein wir unsers vermogens stets vleysz willigk unnd gevlyssenn. Geben zcu  Thorun , sontags nach octavas Corporis Christi anno etc. im XVc unnd irsten jarenn.
+
+Johannes  von Gots gnaden Bischoff zcu  Meyssenn.
+Heinrich  der junger grave und herre zcu  Stolbergk.
+Ulricus von Wolfferstorff  doctor, Techant zcu  Meyssen.
+
+Dem hochwirdigisten unnd irluchtem hochgebornen fursten unnd herren hern  Friderich, dewtzsch ordens yn  Prewssen  hohmeyster, herzcogk zcu  Sachsen, lantgraven in  Doringen, marggrave zcu  Meyssen, unserm gnedigen unnd gnedegistenn hernn.
+`,
+            "nr-10": `Treugae pacis ab imperatore Turcorum per Nicolaum Lanczkoroński obtentae.
+
+Sultan Bayazeth han, Dei gratia imperator Graeciae, Asiae atque Europae et marium. Notum omnibus facimus, quia veniens coram nobis generosus   Nicolaus Lanczkoronski, orator sermi principis dni Johannis Alberti, regis Poloniae, Dei gratia ducis Lithuaniae, Russiae. Prussiae, amici et vicini nostri charissimi, et ex parte praefatae Mtis, amici nostri, nobis aliqua verba retulit et acquisivit illam pacem et amicitiam, quam nos cum sua Mte per nostrum oratorem composuimus, qualem sua Mtas benivole accepit, etiam mediante iuramento facto in praesentia oratoris nostri et litteris a sua Mte missis nobis corroborando et confirmando. Similiter mediante iuramento nostro et litteris nostris confirmamus, corrobamus in tali modo, ut illa amicitia et pax, quam cum praedicto sermo rege, amico nostro et dominiis quibuslibet acceptamus et accepimus, illam fortificamus, confirmamus a tredecima magii anno Jesu 1501 usque quando nobis et praefato regi, amico nostro et cum omnibus subditis et dominiis ex ambabus partibus conservare et firmiter tenere voluerimus et permittimus, in tali modo et ordine: Primitus, quod exnunc usque ad tempus supra expressum cum praefata Mte servabimus pacem et amicitiam custodiemus, et nullum damnum per nos neque per subditos nostros [contra] praefatum regem sive subditos suos facere vel in aliquo modo ordinare, atque facere iustitiam et mutuam caritatem inter nos et subditos nostros simul conservabimus. Et oratores nostri ex utraque parte, totiens quotiens necesse erit, ire et redire sine aliqua violentia neque periculo secure et pacifice possint. Item captivi ex utraque parte possint requiri in dominiis utriusque partium, maxime illi qui capti fuerunt ante hanc praesentem treugam pacis, cum reperientur per Christianos, exemere possint cum voluntate patronum eorum sive dominorum. Item illi qui erunt capti post hanc pacem, liberi sine aliquo pretio exire debent. Item donec haec pax inter nos et praefatam Mtem instabit, mercatores ex utraque parte exercere mercaturam pro commodis eorum libere possint, ire ex uno dominio ad aliud sine ulla oppressione neque praeiudicio, sine iniuria exercere mercaturam in terris et dominiis nostris possint. Verum tamen secundum consuetudinem antiquam in illis locis, ubi solent navigia et vectigalia solvere, iusto modo solvent. Item si aliqui mercatores ex dominiis praefati regis morientur in terris et dominiis nostris, omnem facultatem et mercaturam illius non recipietur a nobis, sed conservetur eadem substantia, donec veniet aliquis parens sanguine coniunctus cum litteris praefatae Mtis testificatoriis, tunc illae facultates per mandatum nostrum restituentur. Item praefatus rex in simili casu taliter facere debet. Item si tempore treugae pacis in utraque [parte], seu praefatus rex vel sua subductione sive industria in occulto sive palam committeretur aliquod damnum sive incursionem, vel nos vel nostri subditi vel mali factores, ipsi mali factores debent esse puniti sine aliqua excusatione, et damna facta per illos malos factores debent esse reformata et restituta in locis eorum, et maxime omnes qui erunt captivati per aliquam malitiam debent restitui et liberari propter hoc, ut conservetur iustitia et pax [ex] utraque partium. Item si esset aliquis in dominio nostro, qui teneretur aliquod debitum aliquibus ex subditis praefatae R. Mtis, tunc actor ille ut conservetur iustitia, debet ire coram iudicium, et ministrabitur sibi iustitia per nostros iudices iuxta legem Dei, ut non patiatur iustus pro impio. Similiter debet facere praefatus rex in suis dominiis subditis nostris. Res omnes praedictae atque expressae firmiter et inviolabiliter atque integraliter servo, et servare promittimus iuxta iuramentum, promittimus et iuramus in his verbis, ut omnes res suprascriptae de amicitia coniuncta inter nos et praefatum regem etiam de dominiis nostris conservare, in bona fide tenere, servare, sine fraudulentia et cavillatione aliqua excogitata servabimus, tenebimus, et nostris subditis servare deducemus atque faciemus et curabimus, ut removerentur omnes insidiae. Et sic Deus iuvet nos et iuramus per Deum Omnipotentem et legem nostram, quod nulla contrarietas in his pactis exiet ex nobis, sed ille qui pertransiet et erit causa et ipse esset periurus, Deus ipse puniet eum, faciet ipsum indignum et inprosperum. Et istum praesentem (s) iuramentum nostrum dedimus ad manus strenui et generosi Nicolai Lanczkoroński   oratoris praefati regis, et per praesentes litteras praedicta amicitia et pax inter nos confirmamus, quas propria manu ad manus eidem dedimus, prout fuisset praefata Mtas propria [persona] praesens. Datum in aula nostra XVIII iulii 1501. Ex Constantinopoli
+`
+        };
+
+        function loadExample() {
+            const selector = document.getElementById('exampleSelector');
+            const selectedKey = selector.value;
+
+            if (selectedKey && docExamples[selectedKey]) {
+                // czyszczenie wyniki przed wczytaniem nowego przykładu
+                clearResultsOnly();
+
+                // wstawianie tekstu do pola
+                document.getElementById('inputText').value = docExamples[selectedKey];
+                updateCharCount();
+            }
+        }
+
+        // funkcja do czyszczenia samych wyników (używana przy zmianie przykładu)
+        function clearResultsOnly() {
+            document.getElementById('results').classList.add('hidden');
+            document.getElementById('xmlOutput').textContent = '';
+            document.getElementById('entityList').innerHTML = '';
+        }
+
+        // funkcja Wyczyść
+        function clearAll() {
+            document.getElementById('inputText').value = '';
+            document.getElementById('exampleSelector').value = ""; // Reset listy rozwijanej
+            clearResultsOnly();
+            updateCharCount();
+        }
+
+        function updateCharCount() {
+            const textarea = document.getElementById('inputText');
+            const counter = document.getElementById('charCounter');
+            const length = textarea.value.length;
+            counter.innerText = `${length}/5000`;
+
+            // wizualne ostrzeżenie, gdy zbliżamy się do limitu
+            if (length >= 4800) {
+                counter.classList.add('text-red-500');
+            } else {
+                counter.classList.remove('text-red-500');
+            }
+        }
+
+        function changeFontSize(delta) {
+            const textarea = document.getElementById('inputText');
+            // aktualny rozmiar (domyślnie 16px, jeśli nieustawiony)
+            const currentSize = window.getComputedStyle(textarea).fontSize;
+            const newSize = parseInt(currentSize) + delta;
+
+            // ograniczenie zakresu (np. od 12px do 32px)
+            if (newSize >= 12 && newSize <= 32) {
+                textarea.style.fontSize = newSize + 'px';
+            }
+        }
+
+        function switchTab(tab) {
+            const xmlCont = document.getElementById('xml-container');
+            const prevCont = document.getElementById('preview-container');
+            const tabXml = document.getElementById('tab-xml');
+            const tabPrev = document.getElementById('tab-preview');
+
+            if (tab === 'xml') {
+                xmlCont.classList.replace('hidden', 'block');
+                prevCont.classList.replace('block', 'hidden');
+                tabXml.className = "px-3 py-1.5 rounded-md bg-white shadow-sm text-blue-700";
+                tabPrev.className = "px-3 py-1.5 rounded-md text-gray-500 hover:text-gray-700";
+            } else {
+                xmlCont.classList.replace('block', 'hidden');
+                prevCont.classList.replace('hidden', 'block');
+                tabXml.className = "px-3 py-1.5 rounded-md text-gray-500 hover:text-gray-700";
+                tabPrev.className = "px-3 py-1.5 rounded-md bg-white shadow-sm text-blue-700";
+                renderPreview();
+            }
+        }
+
+        function renderPreview() {
+            const xmlSource = document.getElementById('xmlOutput').textContent;
+            const previewDiv = document.getElementById('textPreview');
+            if (!xmlSource) return;
+
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(xmlSource, "text/xml");
+            const body = xmlDoc.getElementsByTagName("body")[0];
+
+            if (!body) {
+                previewDiv.innerHTML = "Nie znaleziono sekcji body w dokumencie.";
+                return;
+            }
+
+            // rekurencyjna funkcja zamieniająca XML na HTML Preview
+            function processNode(node) {
+                if (node.nodeType === 3) return node.nodeValue; // Tekst
+
+                let content = "";
+                for (let child of node.childNodes) content += processNode(child);
+
+                if (node.nodeName === "p") return `<p class="mb-4">${content}</p>`;
+                if (node.nodeName === "persName" || node.nodeName === "placeName") {
+                    const typeClass = node.nodeName === "persName" ? "entity-pers" : "entity-place";
+                    const key = node.getAttribute("key") || "Brak nazwy znormalizowanej";
+                    const ref = node.getAttribute("ref") || "Brak identyfikatora";
+                    const tooltip = `${key}\nID: ${ref}`;
+                    return `<span class="${typeClass}" title="${tooltip}">${content}</span>`;
+                }
+                if (node.nodeName === "div") return `<div>${content}</div>`;
+                return content;
+            }
+
+            previewDiv.innerHTML = processNode(body);
+        }
+
+        // uniwersalna funkcja zmiany fontu dla obu widoków
+        function changeResultFontSize(delta) {
+            const xmlElement = document.getElementById('xmlOutput');
+            const prevElement = document.getElementById('textPreview');
+
+            const currentSize = parseInt(window.getComputedStyle(xmlElement).fontSize);
+            const newSize = currentSize + delta;
+
+            if (newSize >= 10 && newSize <= 28) {
+                xmlElement.style.fontSize = newSize + 'px';
+                prevElement.style.fontSize = newSize + 'px';
+            }
+        }
+
+        function toggleHelp(show) {
+            const modal = document.getElementById('helpModal');
+            if (show) {
+                modal.classList.remove('hidden');
+                document.body.style.overflow = 'hidden'; // Blokuje przewijanie strony pod spodem
+            } else {
+                modal.classList.add('hidden');
+                document.body.style.overflow = 'auto'; // Przywraca przewijanie
+            }
+        }
+
+        // opcjonalnie: Zamknij modal kliknięciem poza białym oknem
+        window.onclick = function(event) {
+            const modal = document.getElementById('helpModal');
+            if (event.target == modal) {
+                toggleHelp(false);
+            }
+        }
+
+    </script>
+</body>
+
+</html>
