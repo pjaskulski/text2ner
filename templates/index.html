@@ -235,7 +235,7 @@
             document.getElementById('results').classList.add('hidden');
 
             try {
-                const response = await fetch('/process', {
+                const response = await fetch("{{ url_for('process') }}", {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ text: text })
