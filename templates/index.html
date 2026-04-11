@@ -178,8 +178,8 @@
                         <span class="bg-blue-100 w-6 h-6 rounded-full flex items-center justify-center text-xs">2</span>
                         Analiza
                     </h4>
-                    <p>Kliknij <strong>"Analizuj tekst"</strong>. System automatycznie
-                        przekonwertuje tekst na format TEI-XML i wyszuka encje w bazach Wikidata, WikiHum i GeoNames.</p>
+                <p>Kliknij <strong>"Analizuj tekst"</strong>. System automatycznie
+                        przekonwertuje tekst na format TEI-XML i wyszuka encje w bazach Wikidata, WikiHum, va.wiki.kul.pl i GeoNames.</p>
                 </section>
 
                 <section class="bg-blue-50 p-4 rounded-lg border border-blue-100">
@@ -254,7 +254,7 @@
                 list.innerHTML = data.entities.map(e => `
                     <div class="p-3 bg-gray-50 border rounded-lg">
                         <span class="text-xs font-bold uppercase ${e.type === 'persName' ? 'text-purple-600' : 'text-orange-600'}">${e.type}</span>
-                        <p class="font-medium">${e.name}</p>
+                        <p class="font-medium">${e.surface && e.surface !== e.name ? `${e.surface} (${e.name})` : e.name}</p>
                         <a href="${e.url}" target="_blank" class="text-sm text-blue-500 hover:underline break-all">${e.url}</a>
                     </div>
                 `).join('');

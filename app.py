@@ -7,7 +7,7 @@ from bs4 import BeautifulSoup
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
-from names_linking import search_wikidata, search_geonames, search_wikihum, normalize_name_with_gemini, ask_gemini_to_disambiguate, tag_entities_with_gemini
+from names_linking import analyze_name_with_gemini, collect_candidates, ask_gemini_to_disambiguate, tag_entities_with_gemini
 
 
 load_dotenv()
@@ -66,6 +66,16 @@ def requires_auth(f):
     return decorated
 
 
+def get_entity_context(tag):
+    """Zwraca możliwie pełny kontekst encji z najbliższego bloku tekstu."""
+    parent_block = tag.find_parent(['p', 'ab', 'note', 'head'])
+    if parent_block:
+        raw_text = parent_block.get_text()
+    else:
+        raw_text = tag.parent.get_text() if tag.parent else tag.get_text()
+    return re.sub(r'\s+', ' ', raw_text).strip()
+
+
 # -------------------------------- ROUTES -------------------------------------
 @app.route('/')
 @requires_auth
@@ -94,28 +104,25 @@ def process():
           name = tag.get_text()
           tag_type = tag.name
 
-          # uproszczony kontekst na potrzeby webowe ???
-          context = tag.parent.get_text()[:200]
+          context = get_entity_context(tag)
 
-          norm_name = normalize_name_with_gemini(name, context, tag_type)
+          entity_analysis = analyze_name_with_gemini(name, context, tag_type)
+          norm_name = entity_analysis["normalized_best"]
+          tag['key'] = norm_name
 
-          candidates = []
-          if tag_type == 'placeName':
-              candidates = search_geonames(norm_name) + search_wikidata(norm_name)
-          else:
-              candidates = search_wikihum(norm_name) + search_wikidata(norm_name)
+          candidates = collect_candidates(entity_analysis, context, tag_type)
 
-          selected_url = ask_gemini_to_disambiguate(name, norm_name, context, candidates)
+          selected_url = ask_gemini_to_disambiguate(name, norm_name, context, candidates, entity_analysis=entity_analysis)
 
           if selected_url:
               tag['ref'] = selected_url
-              tag['key'] = norm_name
 
               # KLUCZ UNIKALNOŚCI: Nazwa + URL
               entity_key = (norm_name, selected_url)
               if entity_key not in seen_entities:
-                  entities.append({"name": norm_name, 
-                                 "type": tag_type, 
+                  entities.append({"name": norm_name,
+                                 "surface": name,
+                                 "type": tag_type,
                                  "url": selected_url
                   })
                   seen_entities.add(entity_key)
