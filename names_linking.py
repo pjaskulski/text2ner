@@ -275,25 +275,30 @@ def get_json_response(url, params, headers, source_label):
 
 
 def normalize_whitespace(value):
+    """Normalizuje odstępy i bezpiecznie zamienia pustą wartość na napis."""
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
 
 def normalize_for_lookup(value):
+    """Upraszcza tekst do porównań i wyszukiwania w indeksach tekstowych."""
     value = normalize_whitespace(value).casefold()
     value = re.sub(r"[^\w\s-]", " ", value, flags=re.UNICODE)
     return re.sub(r"\s+", " ", value).strip()
 
 
 def tokenize_for_match(value):
+    """Dzieli tekst na krótszą listę tokenów używaną przy prostym scoringu."""
     cleaned = re.sub(r"[^\w\s-]", " ", normalize_whitespace(value).casefold(), flags=re.UNICODE)
     return [token for token in cleaned.split() if len(token) > 2]
 
 
 def build_casefold_lookup(value):
+    """Tworzy najprostszą wersję tekstu do porównań case-insensitive."""
     return normalize_whitespace(value).casefold()
 
 
 def escape_sparql_string_literal(value):
+    """Escapuje tekst tak, aby można go było bezpiecznie wstawić do SPARQL."""
     return str(value or "").replace("\\", "\\\\").replace('"', '\\"')
 
 
@@ -316,10 +321,12 @@ def start_diagnostic_session(log_dir="log"):
 
 
 def stop_diagnostic_session():
+    """Czyści informację o aktywnym pliku logu dla bieżącego kontekstu."""
     CURRENT_DIAGNOSTIC_LOG_PATH.set(None)
 
 
 def diagnostic_log(message):
+    """Zapisuje komunikat diagnostyczny do pliku sesji albo na stdout."""
     if TEXT2NER_DIAGNOSTIC:
         line = f"[TEXT2NER-DIAG] {message}"
         log_path = CURRENT_DIAGNOSTIC_LOG_PATH.get()
@@ -345,6 +352,7 @@ def parse_json_object(text):
 
 
 def _normalize_string_list(values, *, min_length=2):
+    """Usuwa duplikaty i zbyt krótkie elementy z listy napisów."""
     normalized_values = []
     seen = set()
     for value in values or []:
@@ -360,6 +368,7 @@ def _normalize_string_list(values, *, min_length=2):
 
 
 def get_polish_equivalent(value, tag_type):
+    """Zwraca polski odpowiednik historycznej formy osoby lub miejsca."""
     normalized = normalize_for_lookup(value)
     if not normalized:
         return None
@@ -371,6 +380,7 @@ def get_polish_equivalent(value, tag_type):
 
 
 def augment_with_polish_equivalents(tag_type, values):
+    """Rozszerza listę wariantów o znane polskie odpowiedniki encji."""
     augmented = list(values or [])
     seen = {normalize_whitespace(value).casefold() for value in augmented if normalize_whitespace(value)}
 
@@ -388,6 +398,7 @@ def augment_with_polish_equivalents(tag_type, values):
 
 
 def get_polish_place_adjectival_equivalent(value):
+    """Mapuje historyczną nazwę miejsca na odpowiadający jej przymiotnik."""
     normalized = normalize_for_lookup(value)
     if not normalized:
         return None
@@ -395,6 +406,7 @@ def get_polish_place_adjectival_equivalent(value):
 
 
 def prioritize_polish_person_variants(values):
+    """Ustawia polskie warianty osób przed pozostałymi formami wyszukiwania."""
     prioritized = []
     seen = set()
 
@@ -420,6 +432,7 @@ def prioritize_polish_person_variants(values):
 
 
 def build_plwiki_place_phrases(entity_analysis):
+    """Buduje krótkie frazy miejscowe pomocne przy fallbacku w polskiej Wikipedii."""
     raw_values = list(entity_analysis.get("place_terms", [])) + list(entity_analysis.get("context_clues", []))
     phrases = []
     seen = set()
@@ -447,6 +460,7 @@ def build_plwiki_place_phrases(entity_analysis):
 
 
 def build_plwiki_office_phrases(entity_analysis, place_phrases):
+    """Łączy urzędy i sygnały miejscowe w frazy do zapytań plwiki."""
     office_terms = list(entity_analysis.get("office_terms", []))
     phrases = []
     seen = set()
@@ -519,6 +533,7 @@ def build_plwiki_office_phrases(entity_analysis, place_phrases):
 
 
 def dedupe_candidates(candidates):
+    """Scala kandydatów powtarzających się pod tym samym URL-em lub ID."""
     deduped = {}
     for candidate in candidates:
         key = candidate.get("url") or f"{candidate.get('source')}:{candidate.get('id')}"
@@ -534,6 +549,7 @@ def dedupe_candidates(candidates):
 
 
 def get_best_lang_value(multilang_map, fallback=""):
+    """Wybiera preferowaną wartość językową: polską, potem łacińską."""
     for lang in ("pl", "la"):
         value = multilang_map.get(lang)
         if value:
@@ -542,6 +558,7 @@ def get_best_lang_value(multilang_map, fallback=""):
 
 
 def extract_multilang_values(multilang_map):
+    """Spłaszcza mapę wielojęzyczną do listy unikalnych wartości tekstowych."""
     values = []
     seen = set()
     for lang in ("pl", "la"):
@@ -557,6 +574,7 @@ def extract_multilang_values(multilang_map):
 
 
 def build_multilang_map(data):
+    """Wyciąga z odpowiedzi Wikibase etykiety lub opisy w językach pl i la."""
     result = {}
     for lang in ("pl", "la"):
         value = normalize_whitespace(data.get(lang, {}).get("value", ""))
@@ -566,6 +584,7 @@ def build_multilang_map(data):
 
 
 def build_alias_map(data):
+    """Buduje znormalizowaną mapę aliasów z odpowiedzi API Wikibase."""
     result = {}
     for lang in ("pl", "la"):
         aliases = []
@@ -585,6 +604,7 @@ def build_alias_map(data):
 
 
 def extract_qid_from_title(title):
+    """Wyodrębnia identyfikator Q z tytułu wyniku wyszukiwania Wikibase."""
     match = re.fullmatch(r"(?:Item:)?(Q\d+)", normalize_whitespace(title))
     if match:
         return match.group(1)
@@ -592,6 +612,7 @@ def extract_qid_from_title(title):
 
 
 def build_fuzzy_search_query(query):
+    """Zamienia zwykłe zapytanie na prostą wersję rozmytą dla Cirrusa."""
     tokens = re.findall(r"[\w-]+", normalize_whitespace(query), flags=re.UNICODE)
     if not tokens:
         return ""
@@ -600,6 +621,7 @@ def build_fuzzy_search_query(query):
 
 
 def format_time_value(raw_value):
+    """Wyciąga rok z wartości czasu zwracanej przez Wikibase."""
     raw_value = str(raw_value or "")
     match = re.search(r"([+-]?\d{3,4})", raw_value)
     if match:
@@ -608,6 +630,7 @@ def format_time_value(raw_value):
 
 
 def extract_years_from_text(text, min_year=900, max_year=1800):
+    """Zbiera unikalne lata z tekstu w zadanym przedziale historycznym."""
     years = []
     seen = set()
     for match in re.finditer(r"(?<!\d)(\d{3,4})(?!\d)", normalize_whitespace(text)):
@@ -622,6 +645,7 @@ def extract_years_from_text(text, min_year=900, max_year=1800):
 
 
 def normalize_form_analysis(name, tag_type, analysis):
+    """Porządkuje odpowiedź Gemini do jednolitej struktury analizy encji."""
     fallback = {
         "surface": name,
         "tag_type": tag_type,
@@ -669,6 +693,7 @@ def normalize_form_analysis(name, tag_type, analysis):
 
 
 def validate_form_analysis(name, tag_type, analysis):
+    """Koryguje zbyt osobowe interpretacje przypadkowo nadane miejscom."""
     if tag_type != "placeName":
         return analysis
 
@@ -728,6 +753,7 @@ def fetch_entities_map(source_config, entity_ids):
 
 
 def fetch_wikidata_sitelinks(entity_ids):
+    """Pobiera i cache'uje sitelinki plwiki dla encji z Wikidaty."""
     entity_ids = [entity_id for entity_id in dict.fromkeys(entity_ids) if entity_id]
     if not entity_ids:
         return {}
@@ -762,6 +788,7 @@ def fetch_wikidata_sitelinks(entity_ids):
 
 
 def truncate_wikipedia_lead(text, max_chars=500):
+    """Przycina lead Wikipedii, preferując pełne pierwsze zdanie."""
     text = normalize_whitespace(text)
     if len(text) <= max_chars:
         return text
@@ -773,6 +800,7 @@ def truncate_wikipedia_lead(text, max_chars=500):
 
 
 def fetch_plwiki_extract(page_title):
+    """Pobiera skrócony lead artykułu z polskiej Wikipedii."""
     page_title = normalize_whitespace(page_title)
     if not page_title:
         return ""
@@ -803,6 +831,7 @@ def fetch_plwiki_extract(page_title):
 
 
 def search_plwiki_articles(query, limit=10):
+    """Wyszukuje artykuły w polskiej Wikipedii dla zapytania fallbackowego."""
     query = normalize_whitespace(query)
     if not query:
         return []
@@ -820,6 +849,7 @@ def search_plwiki_articles(query, limit=10):
 
 
 def fetch_plwiki_pages_metadata(page_ids):
+    """Pobiera metadane stron plwiki wraz z QID i krótkim leadem."""
     page_ids = [str(page_id) for page_id in dict.fromkeys(page_ids) if str(page_id).isdigit()]
     if not page_ids:
         return {}
@@ -858,6 +888,7 @@ def fetch_plwiki_pages_metadata(page_ids):
 
 
 def extract_entity_id_values(claims, property_id):
+    """Wyciąga identyfikatory encji z claimów wskazanej właściwości."""
     values = []
     for statement in claims.get(property_id, []):
         mainsnak = statement.get("mainsnak", {})
@@ -872,6 +903,7 @@ def extract_entity_id_values(claims, property_id):
 
 
 def collect_claim_reference_ids(entity):
+    """Zbiera ID encji referencyjnych potrzebnych do opisu claimów."""
     value_ids = []
     for statements in entity.get("claims", {}).values():
         for statement in statements[:2]:
@@ -886,6 +918,7 @@ def collect_claim_reference_ids(entity):
 
 
 def format_claim_value(datavalue, referenced_entities):
+    """Formatuje pojedynczą wartość claimu do czytelnej postaci tekstowej."""
     if not datavalue:
         return None
 
@@ -914,6 +947,7 @@ def format_claim_value(datavalue, referenced_entities):
 
 
 def build_claim_facts(entity, property_entities, referenced_entities, limit=10):
+    """Tworzy krótką listę faktów tekstowych na podstawie claimów encji."""
     facts = []
     seen = set()
     for property_id, statements in entity.get("claims", {}).items():
@@ -936,6 +970,7 @@ def build_claim_facts(entity, property_entities, referenced_entities, limit=10):
 
 
 def get_property_semantic_text(property_entity):
+    """Łączy etykiety i opisy właściwości do prostego dopasowania semantycznego."""
     if not property_entity:
         return ""
     labels = extract_multilang_values(build_multilang_map(property_entity.get("labels", {})))
@@ -944,6 +979,7 @@ def get_property_semantic_text(property_entity):
 
 
 def extract_person_life_years(entity, property_entities):
+    """Próbuje odczytać lata urodzenia i śmierci osoby z jej claimów."""
     birth_markers = {
         "birth", "born", "date of birth", "birth date", "data urodzenia",
         "urodzenia", "natal", "geburt"
@@ -989,6 +1025,7 @@ def extract_person_life_years(entity, property_entities):
 
 
 def build_candidate_from_entity(source_config, entity_id, entity, property_entities, referenced_entities):
+    """Buduje zunifikowany obiekt kandydata na podstawie encji Wikibase."""
     labels_map = build_multilang_map(entity.get("labels", {}))
     descriptions_map = build_multilang_map(entity.get("descriptions", {}))
     aliases_map = build_alias_map(entity.get("aliases", {}))
@@ -1025,6 +1062,7 @@ def build_candidate_from_entity(source_config, entity_id, entity, property_entit
 
 
 def build_candidates_from_entity_ids(source_config, entity_ids):
+    """Pobiera encje i zamienia ich identyfikatory na kandydatów do wyboru."""
     entities_map = fetch_entities_map(source_config, entity_ids)
     property_ids = []
     referenced_ids = []
@@ -1087,10 +1125,12 @@ def search_wikibase_special(query, source_config):
 
 # ------------------------------- FILTERING -----------------------------------
 def candidate_type_text(candidate):
+    """Składa tekst typów encji do prostych testów klasyfikacyjnych."""
     return " ".join(candidate.get("instance_of_texts", [])).casefold()
 
 
 def candidate_is_human(candidate, source_config):
+    """Sprawdza, czy kandydat wygląda na osobę w danym źródle."""
     instance_of_ids = set(candidate.get("instance_of_ids", []))
     if instance_of_ids & source_config["person_type_ids"]:
         return True
@@ -1099,6 +1139,7 @@ def candidate_is_human(candidate, source_config):
 
 
 def candidate_is_place(candidate, source_config):
+    """Sprawdza, czy kandydat wygląda na miejsce lub jednostkę terytorialną."""
     if candidate_is_human(candidate, source_config):
         return False
 
@@ -1111,6 +1152,7 @@ def candidate_is_place(candidate, source_config):
 
 
 def filter_candidates_by_tag(candidates, tag_type, source_config):
+    """Odfiltrowuje kandydatów do typu żądanej encji TEI."""
     filtered = []
     for candidate in candidates:
         if tag_type == "persName" and candidate_is_human(candidate, source_config):
@@ -1185,6 +1227,7 @@ def expand_place_terms(place_terms):
 
 
 def infer_office_families(values):
+    """Rozpoznaje rodziny urzędów używane w fallbacku semantycznym."""
     text = " ".join(normalize_whitespace(value) for value in values or []).casefold()
     families = []
     for family_name, family_data in SEMANTIC_FALLBACK_OFFICE_FAMILIES.items():
@@ -1194,6 +1237,7 @@ def infer_office_families(values):
 
 
 def build_semantic_place_signals(entity_analysis):
+    """Wyciąga z analizy sygnały miejscowe do wzbogacenia zapytań semantycznych."""
     signals = []
     raw_values = list(entity_analysis.get("place_terms", [])) + list(entity_analysis.get("context_clues", []))
     for value in raw_values:
@@ -1215,6 +1259,7 @@ def build_semantic_place_signals(entity_analysis):
 
 
 def build_semantic_person_profile(entity_analysis):
+    """Składa profil osoby używany przy semantycznym fallbacku Wikidaty."""
     name_variants = _normalize_string_list(
         list(entity_analysis.get("lemma_candidates", [])) +
         list(entity_analysis.get("surface_variants", [])),
@@ -1246,6 +1291,7 @@ def build_semantic_person_profile(entity_analysis):
 
 
 def should_use_wikidata_semantic_fallback(entity_analysis, tag_type, decision, candidates):
+    """Ocena, czy warto uruchomić kosztowniejszy fallback semantyczny."""
     if tag_type != "persName":
         return False, "not_persName"
     if decision.get("status") == "selected":
@@ -1269,6 +1315,7 @@ def should_use_wikidata_semantic_fallback(entity_analysis, tag_type, decision, c
 
 
 def build_sparql_regex_pattern(values, *, min_length=3, limit=6):
+    """Buduje fragment regexu SPARQL z listy wartości tekstowych."""
     pattern_values = []
     for value in values or []:
         normalized_value = build_casefold_lookup(value)
@@ -1285,6 +1332,7 @@ def build_sparql_regex_pattern(values, *, min_length=3, limit=6):
 
 
 def build_sparql_contains_terms(values, *, min_length=3, limit=6):
+    """Normalizuje i ogranicza listę terminów do filtrów CONTAINS w SPARQL."""
     terms = []
     for value in values or []:
         normalized_value = build_casefold_lookup(value)
@@ -1295,6 +1343,7 @@ def build_sparql_contains_terms(values, *, min_length=3, limit=6):
 
 
 def build_sparql_contains_filter(variable_name, values):
+    """Składa filtr SPARQL CONTAINS dla wskazanej zmiennej."""
     terms = [value for value in values or [] if value]
     if not terms:
         return ""
@@ -1306,6 +1355,7 @@ def build_sparql_contains_filter(variable_name, values):
 
 
 def build_wikidata_values_fragment(variable_name, entity_ids):
+    """Buduje klauzulę VALUES dla listy QID-ów w zapytaniu SPARQL."""
     qids = [entity_id for entity_id in entity_ids or [] if re.fullmatch(r"Q\d+", str(entity_id))]
     if not qids:
         return ""
@@ -1314,6 +1364,7 @@ def build_wikidata_values_fragment(variable_name, entity_ids):
 
 
 def build_wikidata_semantic_query_specs(profile):
+    """Tworzy warianty zapytań SPARQL z profilu semantycznego osoby."""
     name_terms = build_sparql_contains_terms(profile.get("name_variants", []), min_length=2, limit=5)
     office_terms = build_sparql_contains_terms(profile.get("office_keywords", []), min_length=3, limit=8)
     place_terms = build_sparql_contains_terms(profile.get("place_signals", []), min_length=4, limit=6)
@@ -1346,6 +1397,7 @@ def build_wikidata_semantic_query_specs(profile):
 
 
 def build_wikidata_year_filter_fragment(year_min, year_max):
+    """Buduje filtr lat życia zgodny z datami z kontekstu dokumentu."""
     if year_min is None or year_max is None:
         return ""
 
@@ -1360,6 +1412,7 @@ def build_wikidata_year_filter_fragment(year_min, year_max):
 
 
 def compile_wikidata_person_sparql(query_spec):
+    """Składa końcowe zapytanie SPARQL dla fallbacku osoby w Wikidacie."""
     office_fragment = ""
     office_entity_ids = query_spec.get("office_entity_ids", [])
     office_terms = query_spec.get("office_terms", [])
@@ -1442,6 +1495,7 @@ LIMIT 50
 
 
 def run_wikidata_sparql_query(query):
+    """Uruchamia zapytanie SPARQL na endpointcie Wikidaty."""
     headers = {
         "Accept": "application/sparql-results+json",
         "User-Agent": "EdycjaCyfrowa (PHC IHPAN) - Wikidata semantic fallback",
@@ -1455,6 +1509,7 @@ def run_wikidata_sparql_query(query):
 
 
 def extract_entity_ids_from_sparql_bindings(bindings):
+    """Wyciąga QID-y osób z wyników zwróconych przez endpoint SPARQL."""
     entity_ids = []
     for row in bindings:
         person_value = row.get("person", {}).get("value", "")
@@ -1465,6 +1520,7 @@ def extract_entity_ids_from_sparql_bindings(bindings):
 
 
 def build_candidate_text_corpus(candidate):
+    """Buduje korpus tekstowy kandydata do prostych dopasowań słów kluczowych."""
     values = [candidate.get("name", ""), candidate.get("desc", "")]
     values.extend(extract_multilang_values(candidate.get("labels", {})))
     values.extend(extract_multilang_values(candidate.get("descriptions", {})))
@@ -1477,6 +1533,7 @@ def build_candidate_text_corpus(candidate):
 
 
 def candidate_matches_keywords(candidate, keywords):
+    """Sprawdza, czy kandydat zawiera któreś z podanych słów kluczowych."""
     if not keywords:
         return False
     corpus = build_candidate_text_corpus(candidate)
@@ -1488,6 +1545,7 @@ def candidate_matches_keywords(candidate, keywords):
 
 
 def candidate_office_semantic_score(candidate, profile):
+    """Przyznaje punkty za zgodność kandydata z profilami urzędów."""
     score = 0
     for family_name in profile.get("office_families", []):
         family_keywords = SEMANTIC_FALLBACK_OFFICE_FAMILIES.get(family_name, {}).get("keywords", [])
@@ -1500,6 +1558,7 @@ def candidate_office_semantic_score(candidate, profile):
 
 
 def candidate_place_semantic_score(candidate, profile):
+    """Punktuje zgodność kandydata z sygnałami miejscowymi z kontekstu."""
     matched_signals = 0
     corpus = build_candidate_text_corpus(candidate)
     for signal in profile.get("place_signals", [])[:6]:
@@ -1512,6 +1571,7 @@ def candidate_place_semantic_score(candidate, profile):
 
 
 def candidate_specificity_penalty(candidate):
+    """Kara za kandydatów zbyt ogólnych lub słabo opisanych."""
     penalty = 0
     description_text = normalize_whitespace(" ".join(extract_multilang_values(candidate.get("descriptions", {}))))
     wikipedia_lead = normalize_whitespace(candidate.get("wikipedia_lead", ""))
@@ -1532,6 +1592,7 @@ def candidate_specificity_penalty(candidate):
 
 
 def score_semantic_fallback_candidate(candidate, profile, entity_analysis):
+    """Liczy łączny wynik kandydata w fallbacku semantycznym."""
     return (
         candidate_name_quality(candidate, entity_analysis) * 5
         + candidate_temporal_rank(candidate, entity_analysis) * 5
@@ -1543,6 +1604,7 @@ def score_semantic_fallback_candidate(candidate, profile, entity_analysis):
 
 
 def filter_and_rank_semantic_fallback_candidates(candidates, profile, entity_analysis):
+    """Odfiltrowuje i szereguje kandydatów zwróconych przez SPARQL fallback."""
     enriched = []
     for candidate in candidates:
         if not candidate_is_human(candidate, WIKIBASE_SOURCES["Wikidata"]):
@@ -1570,6 +1632,7 @@ def filter_and_rank_semantic_fallback_candidates(candidates, profile, entity_ana
 
 
 def collect_wikidata_semantic_fallback_candidates(entity_analysis):
+    """Zbiera kandydatów z semantycznego fallbacku opartego o SPARQL."""
     profile = build_semantic_person_profile(entity_analysis)
     query_specs = build_wikidata_semantic_query_specs(profile)
     diagnostic_log(
@@ -1642,6 +1705,7 @@ def collect_wikidata_semantic_fallback_candidates(entity_analysis):
 
 
 def candidate_needs_wikipedia_lead(candidate):
+    """Ocena, czy kandydat z Wikidaty potrzebuje wsparcia leadem z plwiki."""
     if candidate.get("source") != "Wikidata":
         return False
     description_text = " ".join(extract_multilang_values(candidate.get("descriptions", {})))
@@ -1654,6 +1718,7 @@ def candidate_needs_wikipedia_lead(candidate):
 
 
 def should_enrich_candidates_with_wikipedia(tag_type, candidates):
+    """Decyduje, czy przed wyborem warto dodać kandydatom leady z Wikipedii."""
     if tag_type != "persName":
         return False
     if len(candidates) < 2:
@@ -1662,6 +1727,7 @@ def should_enrich_candidates_with_wikipedia(tag_type, candidates):
 
 
 def enrich_wikidata_candidates_with_plwiki_leads(candidates, limit=12):
+    """Wzbogaca kandydatów z Wikidaty leadami pobranymi z polskiej Wikipedii."""
     wikidata_candidates = [
         candidate for candidate in candidates[:limit]
         if candidate_needs_wikipedia_lead(candidate)
@@ -1693,6 +1759,7 @@ def enrich_wikidata_candidates_with_plwiki_leads(candidates, limit=12):
 
 
 def title_matches_person_name(title, name_variants):
+    """Sprawdza, czy tytuł strony plwiki przypomina jedną z form osoby."""
     title_norm = normalize_for_lookup(title)
     if not title_norm:
         return False
@@ -1710,6 +1777,7 @@ def title_matches_person_name(title, name_variants):
 
 
 def build_plwiki_person_fallback_queries(entity_analysis):
+    """Buduje zestaw zapytań do awaryjnego wyszukiwania osób w plwiki."""
     raw_name_variants = augment_with_polish_equivalents(
         "persName",
         list(entity_analysis.get("lemma_candidates", [])) +
@@ -1751,6 +1819,7 @@ def build_plwiki_person_fallback_queries(entity_analysis):
 
 
 def should_use_plwiki_person_fallback(entity_analysis, tag_type, decision):
+    """Ocena, czy po nieudanym linkowaniu uruchamiać fallback plwiki."""
     if tag_type != "persName":
         return False, "not_persName"
     if decision.get("status") == "selected":
@@ -1761,6 +1830,7 @@ def should_use_plwiki_person_fallback(entity_analysis, tag_type, decision):
 
 
 def collect_plwiki_person_fallback_candidates(entity_analysis):
+    """Zbiera kandydatów osób przez polską Wikipedię i mapowanie do Wikidaty."""
     queries = build_plwiki_person_fallback_queries(entity_analysis)
     diagnostic_log(
         f"Plan fallbacku plwiki dla '{entity_analysis['surface']}' (persName): {queries}"
@@ -1864,6 +1934,7 @@ def collect_plwiki_person_fallback_candidates(entity_analysis):
 
 
 def build_query_plan(entity_analysis):
+    """Buduje plan zapytań do źródeł referencyjnych dla jednej encji."""
     queries = []
     seen = set()
 
@@ -1909,6 +1980,7 @@ def build_query_plan(entity_analysis):
 
 
 def candidate_name_quality(candidate, entity_analysis):
+    """Punktuje zgodność nazwy kandydata z formą z tekstu i normalizacją."""
     surface = normalize_for_lookup(entity_analysis.get("surface", ""))
     normalized = normalize_for_lookup(entity_analysis.get("normalized_best", ""))
     names = [candidate.get("name", "")]
@@ -1929,6 +2001,7 @@ def candidate_name_quality(candidate, entity_analysis):
 
 
 def assess_candidate_temporal_fit(candidate, entity_analysis):
+    """Ocena zgodności chronologicznej kandydata z latami z kontekstu."""
     context_years = sorted(entity_analysis.get("context_years", []))
     if not context_years:
         return {"status": "unknown", "reason": "no_context_years"}
@@ -1988,6 +2061,7 @@ def assess_candidate_temporal_fit(candidate, entity_analysis):
 
 
 def format_candidate_life_span(candidate):
+    """Formatuje lata życia kandydata do zwięzłej postaci opisowej."""
     parts = []
     if candidate.get("birth_year") is not None:
         parts.append(f"ur. {candidate['birth_year']}")
@@ -1999,6 +2073,7 @@ def format_candidate_life_span(candidate):
 
 
 def format_candidate_temporal_log_line(candidate, entity_analysis):
+    """Buduje jednowierszowy wpis diagnostyczny o dopasowaniu chronologicznym."""
     temporal = assess_candidate_temporal_fit(candidate, entity_analysis)
     return (
         f"{candidate.get('name', '?')} "
@@ -2011,6 +2086,7 @@ def format_candidate_temporal_log_line(candidate, entity_analysis):
 
 
 def diagnostic_log_temporal_candidates(entity_analysis, tag_type, candidates, scope_label):
+    """Zapisuje w logu zbiorczy obraz chronologii rozważanych kandydatów."""
     context_years = entity_analysis.get("context_years", [])
     if not candidates:
         diagnostic_log(
@@ -2029,6 +2105,7 @@ def diagnostic_log_temporal_candidates(entity_analysis, tag_type, candidates, sc
 
 
 def candidate_temporal_rank(candidate, entity_analysis):
+    """Zamienia ocenę chronologiczną na prosty ranking liczbowy."""
     assessment = assess_candidate_temporal_fit(candidate, entity_analysis)
     if assessment["status"] == "compatible":
         return 2
@@ -2038,6 +2115,7 @@ def candidate_temporal_rank(candidate, entity_analysis):
 
 
 def candidate_query_specificity(candidate, entity_analysis):
+    """Punktuje kandydatów trafionych przez bardziej informacyjne zapytania."""
     score = 0
     office_terms = [normalize_for_lookup(term) for term in entity_analysis.get("office_terms", [])]
     place_terms = [normalize_for_lookup(term) for term in entity_analysis.get("place_terms", [])]
@@ -2059,6 +2137,7 @@ def candidate_query_specificity(candidate, entity_analysis):
 
 
 def order_candidates_for_review(candidates, entity_analysis):
+    """Sortuje kandydatów tak, by najlepsze opcje były na początku listy."""
     source_priority = {"WikiHum": 0, "va.wiki.kul.pl": 1, "Wikidata": 2}
     return sorted(
         candidates,
@@ -2074,6 +2153,7 @@ def order_candidates_for_review(candidates, entity_analysis):
 
 
 def search_source_candidates(query, tag_type, source_config):
+    """Wyszukuje kandydatów w jednym źródle dla pojedynczego zapytania."""
     candidates = search_wikibase_special(query, source_config)
     filtered = filter_candidates_by_tag(candidates, tag_type, source_config)
     for candidate in filtered:
@@ -2083,6 +2163,7 @@ def search_source_candidates(query, tag_type, source_config):
 
 
 def collect_candidates_from_sources(entity_analysis, tag_type, source_names):
+    """Uruchamia plan zapytań na wielu źródłach i scala otrzymanych kandydatów."""
     queries = build_query_plan(entity_analysis)
     collected_candidates = []
     for source_name in source_names:
@@ -2244,14 +2325,17 @@ Przykład dla miejsca:
 
 
 def analyze_name_with_gemini(name, context, tag_type, document_years=None):
+    """Zachowuje starszy interfejs, delegując do analizy formy encji."""
     return analyze_form_with_gemini(name, context, tag_type, document_years=document_years)
 
 
 def normalize_name_with_gemini(name, context, tag_type, document_years=None):
+    """Zwraca tylko najlepszą znormalizowaną formę nazwy encji."""
     return analyze_name_with_gemini(name, context, tag_type, document_years=document_years)["normalized_best"]
 
 
 def format_candidate_for_prompt(candidate, entity_analysis=None):
+    """Formatuje kandydata do bogatego opisu przekazywanego modelowi Gemini."""
     labels = extract_multilang_values(candidate.get("labels", {}))
     aliases = []
     for lang in ("pl", "la"):
@@ -2293,6 +2377,7 @@ def format_candidate_for_prompt(candidate, entity_analysis=None):
 
 
 def choose_candidate_with_gemini(name, context, tag_type, entity_analysis, candidates):
+    """Prosi Gemini o wybór najlepszego kandydata albo zwrot `NONE`."""
     if not candidates:
         return None
 
@@ -2362,6 +2447,7 @@ Zwróć tylko pełny URL wybranego kandydata albo dokładnie NONE.
 
 
 def ask_gemini_to_disambiguate(name, name_n, context, candidates, entity_analysis=None):
+    """Utrzymuje zgodność ze starszym API rozstrzygania wieloznaczności."""
     del name_n
     tag_type = "persName"
     if entity_analysis and entity_analysis.get("entity_type") == "place":
@@ -2370,6 +2456,7 @@ def ask_gemini_to_disambiguate(name, name_n, context, candidates, entity_analysi
 
 
 def build_link_decision(name, context, tag_type, entity_analysis, candidates):
+    """Buduje końcową decyzję linkującą na podstawie kandydatów i Gemini."""
     if not candidates:
         diagnostic_log(
             f"Brak kandydatów do identyfikacji dla '{name}' ({tag_type})."

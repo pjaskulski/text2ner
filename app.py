@@ -65,8 +65,10 @@ def authenticate():
     )
 
 def requires_auth(f):
+    """Opakowuje widok Flaska prostym uwierzytelnianiem HTTP Basic."""
     @wraps(f)
     def decorated(*args, **kwargs):
+        """Przepuszcza żądanie tylko dla poprawnych danych logowania."""
         auth = request.authorization
         if not auth or not check_auth(auth.username, auth.password):
             return authenticate()
@@ -88,11 +90,13 @@ def get_entity_context(tag):
 @app.route('/')
 @requires_auth
 def index():
+    """Renderuje główny interfejs aplikacji."""
     return render_template('index.html')
 
 @app.route('/process', methods=['POST'])
 @requires_auth
 def process():
+    """Taguje tekst, linkuje encje i zwraca wynikowy dokument TEI-XML."""
     diagnostic_log_path = None
     try:
       diagnostic_log_path = start_diagnostic_session(log_dir="log")
