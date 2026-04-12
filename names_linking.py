@@ -1,26 +1,260 @@
+import json
 import os
 import re
-import json
+from contextvars import ContextVar
+from datetime import datetime
+
 import requests
-import time
-from bs4 import BeautifulSoup
+from dotenv import load_dotenv
 from google import genai
 from google.genai import types
-from dotenv import load_dotenv
 
 
 load_dotenv()
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")   
-GEONAMES_USERNAME = os.environ.get("GEONAMES_USERNAME")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 TEXT2NER_DIAGNOSTIC = os.environ.get("TEXT2NER_DIAGNOSTIC", "").strip().lower() in {"1", "true", "yes", "on"}
-#MODEL = 'gemini-3-flash-preview'
-MODEL = 'gemini-3.1-flash-lite-preview'
+MODEL = "gemini-3.1-flash-lite-preview"
 TIMEOUT_MS = 120 * 1000
+MAX_REASONABLE_LIFESPAN_YEARS = 100
+ENABLE_WIKIDATA_SEMANTIC_FALLBACK = False
+WIKIDATA_SPARQL_URL = "https://query.wikidata.org/sparql"
+PLWIKI_API_URL = "https://pl.wikipedia.org/w/api.php"
 
 client = genai.Client(api_key=GEMINI_API_KEY)
+CURRENT_DIAGNOSTIC_LOG_PATH = ContextVar("CURRENT_DIAGNOSTIC_LOG_PATH", default=None)
 
 
-# -------------------------------- FUNCTIONS ----------------------------------
+WIKIBASE_SOURCES = {
+    "WikiHum": {
+        "source": "WikiHum",
+        "api_url": "https://wikihum.lab.dariah.pl/api.php",
+        "entity_base_url": "https://wikihum.lab.dariah.pl/entity",
+        "instance_of_property": "P27",
+        "person_type_ids": {"Q5"},
+        "place_type_ids": {"Q48", "Q50", "Q4"},
+    },
+    "va.wiki.kul.pl": {
+        "source": "va.wiki.kul.pl",
+        "api_url": "https://va.wiki.kul.pl/w/api.php",
+        "entity_base_url": "https://va.wiki.kul.pl/entity",
+        "instance_of_property": "P1",
+        "person_type_ids": {"Q64"},
+        "place_type_ids": {"Q68", "Q2342", "Q81"},
+    },
+    "Wikidata": {
+        "source": "Wikidata",
+        "api_url": "https://www.wikidata.org/w/api.php",
+        "entity_base_url": "https://www.wikidata.org/entity",
+        "instance_of_property": "P31",
+        "person_type_ids": {"Q5"},
+        "place_type_ids": {"Q515", "Q532", "Q486972", "Q6256", "Q82794", "Q1620908"},
+    },
+}
+
+ENTITY_CACHE = {}
+WIKIDATA_SITELINK_CACHE = {}
+WIKIPEDIA_LEAD_CACHE = {}
+PLWIKI_PAGE_CACHE = {}
+
+HUMAN_TYPE_MARKERS = {
+    "human", "człowiek", "czlowiek", "person", "osoba", "persona", "czlowiek"
+}
+
+PLACE_TYPE_MARKERS = {
+    "administrative unit",
+    "administrative territorial entity",
+    "city",
+    "commune",
+    "country",
+    "county",
+    "district",
+    "federal state",
+    "historical region",
+    "human settlement",
+    "kingdom",
+    "land",
+    "municipality",
+    "place",
+    "province",
+    "region",
+    "settlement",
+    "state",
+    "territory",
+    "town",
+    "village",
+    "voivodeship",
+    "ziemia",
+    "województwo",
+    "wojewodztwo",
+    "powiat",
+    "gmina",
+    "miejscowość",
+    "miejscowosc",
+    "miasto",
+    "osada",
+    "wieś",
+    "wies",
+    "kraj",
+    "królestwo",
+    "krolestwo",
+    "państwo",
+    "panstwo",
+    "region historyczny",
+    "kraina",
+    "prowincja",
+    "palatinatus",
+}
+
+GENERIC_PLACE_SIGNAL_TOKENS = {
+    "civitas", "civitate", "civitatem", "diocesis", "diocese", "diocesi",
+    "locus", "locum", "terra", "regio", "partes", "urbs", "oppidum",
+}
+
+POLISH_PERSON_EQUIVALENTS = {
+    "andreas": "Andrzej",
+    "casimirus": "Kazimierz",
+    "fredericus": "Fryderyk",
+    "fridericus": "Fryderyk",
+    "henricus": "Henryk",
+    "ioannes": "Jan",
+    "jacobus": "Jakub",
+    "johannes": "Jan",
+    "ladislaus": "Władysław",
+    "nicolaus": "Mikołaj",
+    "paulus": "Paweł",
+    "petrus": "Piotr",
+    "stanislaus": "Stanisław",
+    "vladislaus": "Władysław",
+    "wenceslaus": "Wacław",
+}
+
+POLISH_PLACE_EQUIVALENTS = {
+    "chelmno": "Chełmno",
+    "cracovia": "Kraków",
+    "culm": "Chełmno",
+    "culmensibus": "Chełmno",
+    "culmensis": "Chełmno",
+    "gedanum": "Gdańsk",
+    "gedanensis": "Gdańsk",
+    "lucca": "Lukka",
+    "luca": "Lukka",
+    "polonia": "Polska",
+    "posnania": "Poznań",
+    "posnaniensis": "Poznań",
+    "prussia": "Prusy",
+    "russia": "Ruś",
+    "ruthenia": "Ruś",
+    "thorun": "Toruń",
+    "torunia": "Toruń",
+}
+
+POLISH_PLACE_ADJECTIVAL_EQUIVALENTS = {
+    "chelmno": "chełmiński",
+    "culm": "chełmiński",
+    "culmensis": "chełmiński",
+    "culmensi": "chełmiński",
+    "culmensibus": "chełmiński",
+    "cracovia": "krakowski",
+    "cracoviensis": "krakowski",
+    "gedanensis": "gdański",
+    "gnesnensis": "gnieźnieński",
+    "gnesnensem": "gnieźnieński",
+    "lucca": "lukeński",
+    "luca": "lukeński",
+    "pomerania": "pomorski",
+    "pomeranie": "pomorski",
+    "posnania": "poznański",
+    "posnaniensis": "poznański",
+    "prussia": "pruski",
+    "russia": "ruski",
+    "ruthenia": "ruski",
+    "thorun": "toruński",
+    "torunia": "toruński",
+}
+
+PLWIKI_OFFICE_EQUIVALENTS = {
+    "archiepiscopus": "arcybiskup",
+    "bishop": "biskup",
+    "biskup": "biskup",
+    "bp": "biskup",
+    "canon": "kanonik",
+    "canonicus": "kanonik",
+    "cardinal": "kardynał",
+    "cardinalis": "kardynał",
+    "chancellor": "kanclerz",
+    "cancellarius": "kanclerz",
+    "collector": "poborca",
+    "collectoris": "poborca",
+    "dux": "książę",
+    "episcopus": "biskup",
+    "hetman": "hetman",
+    "kanclerz": "kanclerz",
+    "kanonik": "kanonik",
+    "kapłan": "kapłan",
+    "kaplan": "kapłan",
+    "kardynal": "kardynał",
+    "kardynał": "kardynał",
+    "king": "król",
+    "król": "król",
+    "krol": "król",
+    "książę": "książę",
+    "ksiaze": "książę",
+    "notarius": "notariusz",
+    "notary": "notariusz",
+    "opat": "opat",
+    "papa": "papież",
+    "papiez": "papież",
+    "papież": "papież",
+    "pope": "papież",
+    "presbyter": "prezbiter",
+    "priest": "kapłan",
+    "rex": "król",
+    "sacerdos": "kapłan",
+    "vir": "duchowny",
+    "wojewoda": "wojewoda",
+}
+
+SEMANTIC_FALLBACK_OFFICE_FAMILIES = {
+    "bishop_family": {
+        "entity_ids": ["Q611644"],
+        "triggers": [
+            "episcopus", "bishop", "biskup", "katolicki biskup",
+            "catholic bishop", "roman catholic bishop"
+        ],
+        "keywords": [
+            "episcopus", "bishop", "biskup", "catholic bishop",
+            "roman catholic bishop", "katolicki biskup", "bishop of"
+        ],
+    },
+    "cardinal_family": {
+        "entity_ids": [],
+        "triggers": ["cardinalis", "cardinal", "kardynał", "kardynal"],
+        "keywords": ["cardinalis", "cardinal", "kardynał", "kardynal"],
+    },
+    "priest_family": {
+        "entity_ids": [],
+        "triggers": ["presbyter", "priest", "kapłan", "kaplan", "sacerdos", "canon", "kanonik"],
+        "keywords": ["presbyter", "priest", "kapłan", "kaplan", "sacerdos", "canon", "kanonik", "cleric", "duchowny"],
+    },
+    "papal_family": {
+        "entity_ids": [],
+        "triggers": ["papa", "pontifex", "papież", "papiez", "pope"],
+        "keywords": ["papa", "pontifex", "papież", "papiez", "pope"],
+    },
+    "ruler_family": {
+        "entity_ids": [],
+        "triggers": ["rex", "król", "krol", "regina", "królowa", "krolowa", "dux", "książę", "ksiaze"],
+        "keywords": ["rex", "król", "krol", "regina", "królowa", "krolowa", "dux", "książę", "ksiaze", "king", "queen", "duke"],
+    },
+    "official_family": {
+        "entity_ids": [],
+        "triggers": ["collector", "notarius", "notary", "wojewoda", "palatinus", "cancellarius", "kanclerz"],
+        "keywords": ["collector", "collectoris", "notarius", "notary", "wojewoda", "palatinus", "cancellarius", "kanclerz", "official"],
+    },
+}
+
+
+# -------------------------------- HELPERS ------------------------------------
 def get_json_response(url, params, headers, source_label):
     """Pobiera JSON z defensywną obsługą błędów HTTP i odpowiedzi nie-JSON."""
     response = requests.get(url, params=params, headers=headers, timeout=30)
@@ -41,181 +275,59 @@ def get_json_response(url, params, headers, source_label):
 
 
 def normalize_whitespace(value):
-    return re.sub(r'\s+', ' ', value).strip()
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def normalize_for_lookup(value):
+    value = normalize_whitespace(value).casefold()
+    value = re.sub(r"[^\w\s-]", " ", value, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def tokenize_for_match(value):
+    cleaned = re.sub(r"[^\w\s-]", " ", normalize_whitespace(value).casefold(), flags=re.UNICODE)
+    return [token for token in cleaned.split() if len(token) > 2]
+
+
+def build_casefold_lookup(value):
+    return normalize_whitespace(value).casefold()
+
+
+def escape_sparql_string_literal(value):
+    return str(value or "").replace("\\", "\\\\").replace('"', '\\"')
+
+
+def start_diagnostic_session(log_dir="log"):
+    """Tworzy plik logu dla pojedynczego uruchomienia analizy i ustawia go jako aktywny."""
+    os.makedirs(log_dir, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_path = os.path.join(log_dir, f"{timestamp}.log")
+    counter = 1
+    while os.path.exists(log_path):
+        log_path = os.path.join(log_dir, f"{timestamp}_{counter:02d}.log")
+        counter += 1
+
+    with open(log_path, "a", encoding="utf-8") as log_file:
+        log_file.write(
+            f"[TEXT2NER-DIAG] Start analizy: {datetime.now().isoformat(timespec='seconds')}\n"
+        )
+    CURRENT_DIAGNOSTIC_LOG_PATH.set(log_path)
+    return log_path
+
+
+def stop_diagnostic_session():
+    CURRENT_DIAGNOSTIC_LOG_PATH.set(None)
 
 
 def diagnostic_log(message):
     if TEXT2NER_DIAGNOSTIC:
-        print(f"[TEXT2NER-DIAG] {message}")
-
-
-def tokenize_for_match(value):
-    cleaned = re.sub(r"[^\w\s-]", " ", value.casefold(), flags=re.UNICODE)
-    return [token for token in cleaned.split() if len(token) > 2]
-
-
-def has_overlap_tokens(left, right):
-    left_tokens = set(tokenize_for_match(left))
-    right_tokens = set(tokenize_for_match(right))
-    if not left_tokens or not right_tokens:
-        return False
-    return bool(left_tokens & right_tokens)
-
-
-def common_prefix_length(left, right):
-    left = normalize_whitespace(left).casefold()
-    right = normalize_whitespace(right).casefold()
-    length = 0
-    for left_char, right_char in zip(left, right):
-        if left_char != right_char:
-            break
-        length += 1
-    return length
-
-
-def looks_like_latin_place_form(value):
-    tokens = tokenize_for_match(value)
-    if not tokens:
-        return False
-    token = tokens[0]
-    latin_suffixes = (
-        'anus', 'ana', 'anum', 'ense', 'ensem', 'ensi', 'ensis', 'ensi',
-        'ianus', 'iana', 'ianum', 'icus', 'ica', 'icum', 'ina', 'ino',
-        'inus', 'inum', 'iorum', 'ior', 'ii', 'iae', 'iam', 'io', 'ium'
-    )
-    return token.endswith(latin_suffixes)
-
-
-def can_keep_place_normalization(surface, normalized_best, analysis):
-    confidence = analysis.get("confidence", "low")
-    if confidence not in {"high", "medium"}:
-        return False
-
-    normalized_tokens = tokenize_for_match(normalized_best)
-    if not normalized_tokens or len(normalized_tokens) > 3:
-        return False
-
-    if not looks_like_latin_place_form(surface):
-        return False
-
-    prefix_len = common_prefix_length(surface, normalized_best)
-    if prefix_len >= 4:
-        return True
-    if confidence == "high" and prefix_len >= 2:
-        return True
-
-    for variant in analysis.get("variants", []) or []:
-        if variant == surface:
-            continue
-        if has_overlap_tokens(variant, normalized_best):
-            return True
-
-    return False
-
-
-def build_place_fallback_analysis(name, analysis, place_like_markers, person_like_markers):
-    filtered_clues = [
-        clue for clue in analysis.get("context_clues", [])
-        if any(marker in clue.casefold() for marker in place_like_markers)
-    ]
-
-    variants = [name]
-    seen_variants = {name.casefold()}
-    for variant in analysis.get("variants", []) or []:
-        variant = normalize_whitespace(str(variant))
-        if len(variant) < 2:
-            continue
-        folded = variant.casefold()
-        if folded in seen_variants:
-            continue
-        if any(marker in folded for marker in person_like_markers):
-            continue
-        if has_overlap_tokens(name, variant):
-            variants.append(variant)
-            seen_variants.add(folded)
-            continue
-        if can_keep_place_normalization(name, variant, analysis):
-            variants.append(variant)
-            seen_variants.add(folded)
-
-    return {
-        "surface": name,
-        "entity_type": "place",
-        "normalized_best": name,
-        "confidence": "low",
-        "variants": variants,
-        "context_clues": filtered_clues
-    }
-
-
-def extract_text_claims(entity):
-    """Wyciąga krótkie tekstowe wartości statementów do użycia w rankingu kandydatów."""
-    snippets = []
-    seen = set()
-    for statements in entity.get('claims', {}).values():
-        for statement in statements:
-            mainsnak = statement.get('mainsnak', {})
-            datavalue = mainsnak.get('datavalue')
-            if not datavalue:
-                continue
-            if datavalue.get('type') != 'string':
-                continue
-            value = normalize_whitespace(str(datavalue.get('value', '')))
-            if len(value) < 6:
-                continue
-            folded = value.casefold()
-            if folded in seen:
-                continue
-            seen.add(folded)
-            snippets.append(value)
-    return snippets[:8]
-
-
-def build_wikibase_fallback_queries(query):
-    """Buduje kilka uproszczonych wariantów zapytania dla wyszukiwania w Wikibase."""
-    cleaned = normalize_whitespace(query)
-    without_punctuation = re.sub(r'[^\w\s-]', ' ', cleaned, flags=re.UNICODE)
-    without_punctuation = normalize_whitespace(without_punctuation)
-
-    title_words = {
-        'abp', 'arcybiskup', 'biskup', 'bp', 'cesarz', 'cardinalis', 'cardinal',
-        'doktor', 'doctor', 'dr', 'dux', 'electus', 'graf', 'grave', 'han',
-        'herre', 'hetman', 'imperator', 'kanclerz', 'kapłan', 'kardynał',
-        'kardynal', 'king', 'król', 'krol', 'królowa', 'krolowa', 'książę',
-        'ksiaze', 'landgraf', 'legat', 'magister', 'margrabia', 'opat',
-        'papież', 'papiez', 'prałat', 'pralat', 'regina', 'rex', 'saint',
-        'sanctus', 'sir', 'sułtan', 'sultan', 'techant', 'von', 'wojewoda'
-    }
-
-    variants = []
-    seen = set()
-
-    def add_variant(value):
-        normalized = re.sub(r'\s+', ' ', value).strip(" ,.;:()[]{}\"'")
-        if len(normalized) < 3:
-            return
-        lowered = normalized.casefold()
-        if lowered in seen:
-            return
-        seen.add(lowered)
-        variants.append(normalized)
-
-    add_variant(cleaned)
-    add_variant(without_punctuation)
-
-    tokens = without_punctuation.split()
-    tokens_wo_titles = [token for token in tokens if token.casefold() not in title_words]
-    add_variant(" ".join(tokens_wo_titles))
-
-    if len(tokens_wo_titles) >= 2:
-        add_variant(" ".join(tokens_wo_titles[:2]))
-        add_variant(" ".join(tokens_wo_titles[-2:]))
-
-    for token in tokens_wo_titles:
-        if len(token) >= 5:
-            add_variant(token)
-
-    return variants
+        line = f"[TEXT2NER-DIAG] {message}"
+        log_path = CURRENT_DIAGNOSTIC_LOG_PATH.get()
+        if log_path:
+            with open(log_path, "a", encoding="utf-8") as log_file:
+                log_file.write(f"{line}\n")
+        else:
+            print(line)
 
 
 def parse_json_object(text):
@@ -232,324 +344,2170 @@ def parse_json_object(text):
         raise
 
 
-def normalize_analysis_result(name, tag_type, analysis):
-    """Normalizuje strukturę zwracaną przez model do przewidywalnego słownika."""
+def _normalize_string_list(values, *, min_length=2):
+    normalized_values = []
+    seen = set()
+    for value in values or []:
+        value = normalize_whitespace(value)
+        if len(value) < min_length:
+            continue
+        folded = value.casefold()
+        if folded in seen:
+            continue
+        seen.add(folded)
+        normalized_values.append(value)
+    return normalized_values
+
+
+def get_polish_equivalent(value, tag_type):
+    normalized = normalize_for_lookup(value)
+    if not normalized:
+        return None
+    if tag_type == "persName":
+        return POLISH_PERSON_EQUIVALENTS.get(normalized)
+    if tag_type == "placeName":
+        return POLISH_PLACE_EQUIVALENTS.get(normalized)
+    return None
+
+
+def augment_with_polish_equivalents(tag_type, values):
+    augmented = list(values or [])
+    seen = {normalize_whitespace(value).casefold() for value in augmented if normalize_whitespace(value)}
+
+    for value in list(augmented):
+        polish_equivalent = get_polish_equivalent(value, tag_type)
+        if not polish_equivalent:
+            continue
+        folded = polish_equivalent.casefold()
+        if folded in seen:
+            continue
+        seen.add(folded)
+        augmented.append(polish_equivalent)
+
+    return _normalize_string_list(augmented)
+
+
+def get_polish_place_adjectival_equivalent(value):
+    normalized = normalize_for_lookup(value)
+    if not normalized:
+        return None
+    return POLISH_PLACE_ADJECTIVAL_EQUIVALENTS.get(normalized)
+
+
+def prioritize_polish_person_variants(values):
+    prioritized = []
+    seen = set()
+
+    for value in values or []:
+        polish_equivalent = get_polish_equivalent(value, "persName")
+        if polish_equivalent:
+            folded = polish_equivalent.casefold()
+            if folded not in seen:
+                seen.add(folded)
+                prioritized.append(polish_equivalent)
+
+    for value in values or []:
+        normalized_value = normalize_whitespace(value)
+        if not normalized_value:
+            continue
+        folded = normalized_value.casefold()
+        if folded in seen:
+            continue
+        seen.add(folded)
+        prioritized.append(normalized_value)
+
+    return prioritized
+
+
+def build_plwiki_place_phrases(entity_analysis):
+    raw_values = list(entity_analysis.get("place_terms", [])) + list(entity_analysis.get("context_clues", []))
+    phrases = []
+    seen = set()
+
+    def add_phrase(value):
+        value = normalize_whitespace(value)
+        if len(value) < 3:
+            return
+        folded = value.casefold()
+        if folded in seen:
+            return
+        seen.add(folded)
+        phrases.append(value)
+
+    for raw_value in raw_values:
+        add_phrase(get_polish_equivalent(raw_value, "placeName"))
+        add_phrase(get_polish_place_adjectival_equivalent(raw_value))
+
+        tokens = [token for token in re.split(r"[\s,():;\-]+", normalize_whitespace(raw_value)) if token]
+        for token in tokens:
+            add_phrase(get_polish_equivalent(token, "placeName"))
+            add_phrase(get_polish_place_adjectival_equivalent(token))
+
+    return phrases[:6]
+
+
+def build_plwiki_office_phrases(entity_analysis, place_phrases):
+    office_terms = list(entity_analysis.get("office_terms", []))
+    phrases = []
+    seen = set()
+
+    def add_phrase(value):
+        value = normalize_whitespace(value)
+        if len(value) < 3:
+            return
+        folded = value.casefold()
+        if folded in seen:
+            return
+        seen.add(folded)
+        phrases.append(value)
+
+    for office_term in office_terms:
+        normalized_term = normalize_whitespace(office_term)
+        if not normalized_term:
+            continue
+        lowered = normalize_for_lookup(normalized_term)
+        tokens = [token for token in re.split(r"[\s,():;\-]+", lowered) if token]
+
+        matched_roles = []
+        for token in tokens:
+            equivalent = PLWIKI_OFFICE_EQUIVALENTS.get(token)
+            if equivalent:
+                matched_roles.append(equivalent)
+
+        for role in matched_roles:
+            add_phrase(role)
+
+        office_place_adjectives = []
+        office_place_names = []
+        for token in tokens:
+            adjectival = get_polish_place_adjectival_equivalent(token)
+            if adjectival:
+                office_place_adjectives.append(adjectival)
+            place_name = get_polish_equivalent(token, "placeName")
+            if place_name:
+                office_place_names.append(place_name)
+
+        office_place_adjectives = _normalize_string_list(office_place_adjectives)
+        office_place_names = _normalize_string_list(office_place_names)
+
+        for role in matched_roles:
+            for adjective in office_place_adjectives[:2]:
+                add_phrase(f"{role} {adjective}")
+            for place_name in office_place_names[:2]:
+                add_phrase(f"{role} {place_name}")
+
+    if not phrases:
+        for office_term in expand_office_terms(office_terms):
+            equivalent = PLWIKI_OFFICE_EQUIVALENTS.get(normalize_for_lookup(office_term))
+            if equivalent:
+                add_phrase(equivalent)
+
+    if place_phrases:
+        role_only_phrases = phrases[:]
+        adjectival_places = [
+            place_phrase for place_phrase in place_phrases
+            if place_phrase == place_phrase.lower() and " " not in place_phrase
+        ]
+        for role_phrase in role_only_phrases:
+            role_tokens = role_phrase.split()
+            if len(role_tokens) != 1:
+                continue
+            for adjective in adjectival_places[:2]:
+                add_phrase(f"{role_phrase} {adjective}")
+
+    return phrases[:8]
+
+
+def dedupe_candidates(candidates):
+    deduped = {}
+    for candidate in candidates:
+        key = candidate.get("url") or f"{candidate.get('source')}:{candidate.get('id')}"
+        if key in deduped:
+            existing = deduped[key]
+            existing_queries = existing.setdefault("matched_queries", [])
+            for query in candidate.get("matched_queries", []):
+                if query not in existing_queries:
+                    existing_queries.append(query)
+            continue
+        deduped[key] = candidate
+    return list(deduped.values())
+
+
+def get_best_lang_value(multilang_map, fallback=""):
+    for lang in ("pl", "la"):
+        value = multilang_map.get(lang)
+        if value:
+            return value
+    return fallback
+
+
+def extract_multilang_values(multilang_map):
+    values = []
+    seen = set()
+    for lang in ("pl", "la"):
+        value = normalize_whitespace(multilang_map.get(lang, ""))
+        if not value:
+            continue
+        folded = value.casefold()
+        if folded in seen:
+            continue
+        seen.add(folded)
+        values.append(value)
+    return values
+
+
+def build_multilang_map(data):
+    result = {}
+    for lang in ("pl", "la"):
+        value = normalize_whitespace(data.get(lang, {}).get("value", ""))
+        if value:
+            result[lang] = value
+    return result
+
+
+def build_alias_map(data):
+    result = {}
+    for lang in ("pl", "la"):
+        aliases = []
+        seen = set()
+        for alias in data.get(lang, []):
+            value = normalize_whitespace(alias.get("value", ""))
+            if not value:
+                continue
+            folded = value.casefold()
+            if folded in seen:
+                continue
+            seen.add(folded)
+            aliases.append(value)
+        if aliases:
+            result[lang] = aliases
+    return result
+
+
+def extract_qid_from_title(title):
+    match = re.fullmatch(r"(?:Item:)?(Q\d+)", normalize_whitespace(title))
+    if match:
+        return match.group(1)
+    return None
+
+
+def build_fuzzy_search_query(query):
+    tokens = re.findall(r"[\w-]+", normalize_whitespace(query), flags=re.UNICODE)
+    if not tokens:
+        return ""
+    fuzzy_tokens = [f"{token}~2" for token in tokens]
+    return " ".join(fuzzy_tokens)
+
+
+def format_time_value(raw_value):
+    raw_value = str(raw_value or "")
+    match = re.search(r"([+-]?\d{3,4})", raw_value)
+    if match:
+        return match.group(1).lstrip("+")
+    return raw_value
+
+
+def extract_years_from_text(text, min_year=900, max_year=1800):
+    years = []
+    seen = set()
+    for match in re.finditer(r"(?<!\d)(\d{3,4})(?!\d)", normalize_whitespace(text)):
+        year = int(match.group(1))
+        if year < min_year or year > max_year:
+            continue
+        if year in seen:
+            continue
+        seen.add(year)
+        years.append(year)
+    return years
+
+
+def normalize_form_analysis(name, tag_type, analysis):
     fallback = {
         "surface": name,
+        "tag_type": tag_type,
         "entity_type": "place" if tag_type == "placeName" else "person",
         "normalized_best": name,
-        "confidence": "low",
-        "variants": [name],
-        "context_clues": []
+        "confidence_form": "low",
+        "lemma_candidates": [name],
+        "surface_variants": [name],
+        "office_terms": [],
+        "place_terms": [],
+        "context_clues": [],
     }
     if not isinstance(analysis, dict):
         return fallback
 
-    normalized_best = normalize_whitespace(str(analysis.get("normalized_best", "") or name))
-    confidence = str(analysis.get("confidence", "low")).strip().lower()
-    if confidence not in {"high", "medium", "low"}:
-        confidence = "low"
+    normalized_best = normalize_whitespace(analysis.get("normalized_best", "") or name)
+    confidence_form = normalize_whitespace(analysis.get("confidence_form", "low")).lower()
+    if confidence_form not in {"high", "medium", "low"}:
+        confidence_form = "low"
 
-    variants = []
-    seen_variants = set()
-    for value in [name, normalized_best] + list(analysis.get("variants", []) or []):
-        if not value:
-            continue
-        value = normalize_whitespace(str(value))
-        if len(value) < 2:
-            continue
-        folded = value.casefold()
-        if folded in seen_variants:
-            continue
-        seen_variants.add(folded)
-        variants.append(value)
-
-    context_clues = []
-    seen_clues = set()
-    for clue in analysis.get("context_clues", []) or []:
-        clue = normalize_whitespace(str(clue))
-        if len(clue) < 3:
-            continue
-        folded = clue.casefold()
-        if folded in seen_clues:
-            continue
-        seen_clues.add(folded)
-        context_clues.append(clue)
+    lemma_candidates = _normalize_string_list(
+        [normalized_best] + list(analysis.get("lemma_candidates", []) or [])
+    )
+    surface_variants = _normalize_string_list(
+        [name, normalized_best] + list(analysis.get("surface_variants", []) or [])
+    )
+    lemma_candidates = augment_with_polish_equivalents(tag_type, lemma_candidates)
+    surface_variants = augment_with_polish_equivalents(tag_type, surface_variants)
+    office_terms = _normalize_string_list(analysis.get("office_terms", []), min_length=3)
+    place_terms = _normalize_string_list(analysis.get("place_terms", []), min_length=3)
+    context_clues = _normalize_string_list(analysis.get("context_clues", []), min_length=3)
 
     return {
         "surface": name,
+        "tag_type": tag_type,
         "entity_type": "place" if tag_type == "placeName" else "person",
         "normalized_best": normalized_best or name,
-        "confidence": confidence,
-        "variants": variants or [name],
-        "context_clues": context_clues
+        "confidence_form": confidence_form,
+        "lemma_candidates": lemma_candidates or [name],
+        "surface_variants": surface_variants or [name],
+        "office_terms": office_terms,
+        "place_terms": place_terms,
+        "context_clues": context_clues,
     }
 
 
-def validate_entity_analysis(name, tag_type, analysis):
-    """Chroni pipeline przed oczywiście błędną zmianą typu encji przez analizę modelu."""
+def validate_form_analysis(name, tag_type, analysis):
     if tag_type != "placeName":
         return analysis
 
-    normalized_best = analysis.get("normalized_best", name)
-    place_like_markers = {
-        'archidiecezja', 'civitas', 'diecezja', 'kraj', 'kraina', 'miasto',
-        'miejscowość', 'panstwo', 'państwo', 'parafia', 'powiat', 'region',
-        'rzeka', 'wieś', 'wies'
+    normalized_best = normalize_for_lookup(analysis.get("normalized_best", name))
+    clue_text = " ".join(analysis.get("context_clues", [])).casefold()
+    person_markers = {
+        "arcybiskup", "biskup", "bp", "cardinalis", "collector", "dux", "episcopus",
+        "hetman", "kardynał", "kardynal", "król", "krol", "książę", "ksiaze",
+        "nuncius", "opat", "papież", "papiez", "rex", "vir", "wojewoda"
     }
-    person_like_markers = {
-        'arcybiskup', 'biskup', 'bp', 'cardinalis', 'collector', 'dux',
-        'episcopus', 'hetman', 'kardynał', 'krol', 'król', 'książę',
-        'nuncius', 'opat', 'papież', 'papiez', 'postać', 'rex', 'vir',
-        'wojewoda'
-    }
-
-    normalized_folded = normalized_best.casefold()
-    surface_folded = name.casefold()
-
-    if any(marker in normalized_folded for marker in person_like_markers):
+    if any(marker in normalized_best for marker in person_markers):
         diagnostic_log(
-            f"Walidacja placeName '{name}': odrzucono normalized_best='{normalized_best}' "
-            f"jako zbyt osobowe."
+            f"Walidacja placeName '{name}': odrzucono znormalizowaną formę "
+            f"'{analysis.get('normalized_best', name)}' jako zbyt osobową."
         )
-        return build_place_fallback_analysis(name, analysis, place_like_markers, person_like_markers)
-
-    if not has_overlap_tokens(name, normalized_best):
-        if can_keep_place_normalization(name, normalized_best, analysis):
-            diagnostic_log(
-                f"Walidacja placeName '{name}': zachowano normalized_best='{normalized_best}' "
-                f"mimo braku wspólnych tokenów, bo wygląda na poprawną łacińską formę miejscową."
-            )
-            return analysis
+        analysis["normalized_best"] = name
+        analysis["confidence_form"] = "low"
+    elif any(marker in clue_text for marker in person_markers):
         diagnostic_log(
-            f"Walidacja placeName '{name}': odrzucono normalized_best='{normalized_best}' "
-            f"z powodu braku wspólnych tokenów."
+            f"Walidacja placeName '{name}': zachowano ostrożnie surface form, "
+            f"bo wskazówki kontekstowe są osobowe."
         )
-        return build_place_fallback_analysis(name, analysis, place_like_markers, person_like_markers)
-
-    if surface_folded == normalized_folded:
-        return analysis
-
+        analysis["normalized_best"] = name
+        analysis["confidence_form"] = "low"
     return analysis
 
 
-def is_likely_entity_match(candidate_name, candidate_desc, tag_type):
-    """Odrzuca ewidentnie nietrafione wyniki pełnotekstowe, np. dokumenty zamiast osób lub miejsc."""
-    haystack = f"{candidate_name} {candidate_desc}".casefold()
+# -------------------------- WIKIBASE FETCHING --------------------------------
+def fetch_entities_map(source_config, entity_ids):
+    """Pobiera encje (Q/P) z cache lub przez wbgetentities."""
+    entity_ids = [entity_id for entity_id in dict.fromkeys(entity_ids) if entity_id]
+    if not entity_ids:
+        return {}
 
-    document_markers = {
-        'akt', 'akta', 'bulla', 'dokument', 'document', 'dyplom', 'edycja',
-        'epistola', 'formularz', 'karta', 'kopiariusz', 'korespondencja',
-        'list', 'lista', 'metryka', 'nota', 'pokwitowanie', 'przywilej',
-        'rachunek', 'regest', 'spis', 'testament', 'wiadomość', 'zapis'
-    }
-    place_markers = {
-        'archidiecezja', 'civitas', 'diecezja', 'gród', 'grod', 'kraj',
-        'kraina', 'miasto', 'miejscowość', 'miejscowosc', 'opactwo',
-        'osada', 'państwo', 'panstwo', 'parafia', 'powiat', 'region',
-        'rzeka', 'state', 'town', 'village', 'wieś', 'wies'
-    }
-    person_markers = {
-        'abbas', 'arcybiskup', 'author', 'autor', 'biskup', 'bishop', 'bp',
-        'cardinal', 'cardinalis', 'cesarz', 'collector', 'doctor', 'doktor',
-        'duchess', 'dux', 'emperor', 'episcopus', 'hetman', 'imperator',
-        'kanclerz', 'kapłan', 'kaplan', 'kardynał', 'kardynal', 'king',
-        'król', 'krol', 'królowa', 'krolowa', 'książę', 'ksiaze', 'lord',
-        'margrabia', 'monarcha', 'opat', 'papież', 'papiez', 'persona',
-        'postać', 'postac', 'prince', 'princess', 'queen', 'regina', 'rex',
-        'saint', 'sanctus', 'scholar', 'scribe', 'sekretarz', 'sultan',
-        'sułtan', 'święty', 'swiety', 'techant', 'uczony', 'vir', 'władca',
-        'wladca', 'wojewoda'
-    }
-    office_markers = {
-        'archiepiscopus', 'biskup poznański', 'biskup krakowski', 'dioecesis',
-        'ecclesia', 'episcopus', 'kanonik', 'kapituła', 'kapitula',
-        'metropolita', 'nuncius', 'officialis', 'officium', 'ordynariusz',
-        'parochus', 'poznań, episcopus', 'prepozyt', 'proboszcz', 'sede',
-        'sedes', 'stolica biskupia', 'suffragan'
+    source = source_config["source"]
+    missing_ids = [entity_id for entity_id in entity_ids if (source, entity_id) not in ENTITY_CACHE]
+    headers = {"User-Agent": "EdycjaCyfrowa (PHC IHPAN) - skrypt badawczy"}
+
+    for offset in range(0, len(missing_ids), 40):
+        batch = missing_ids[offset:offset + 40]
+        params = {
+            "action": "wbgetentities",
+            "ids": "|".join(batch),
+            "languages": "pl|la|en",
+            "format": "json",
+            "props": "labels|descriptions|aliases|claims",
+        }
+        response = get_json_response(source_config["api_url"], params, headers, source)
+        entities = response.get("entities", {})
+        for entity_id in batch:
+            ENTITY_CACHE[(source, entity_id)] = entities.get(entity_id, {})
+
+    return {
+        entity_id: ENTITY_CACHE.get((source, entity_id), {})
+        for entity_id in entity_ids
     }
 
-    if any(marker in haystack for marker in document_markers):
+
+def fetch_wikidata_sitelinks(entity_ids):
+    entity_ids = [entity_id for entity_id in dict.fromkeys(entity_ids) if entity_id]
+    if not entity_ids:
+        return {}
+
+    missing_ids = [entity_id for entity_id in entity_ids if entity_id not in WIKIDATA_SITELINK_CACHE]
+    headers = {"User-Agent": "EdycjaCyfrowa (PHC IHPAN) - Wikipedia lead enrichment"}
+
+    for offset in range(0, len(missing_ids), 40):
+        batch = missing_ids[offset:offset + 40]
+        params = {
+            "action": "wbgetentities",
+            "ids": "|".join(batch),
+            "format": "json",
+            "props": "sitelinks",
+            "sitefilter": "plwiki",
+        }
+        response = get_json_response(WIKIBASE_SOURCES["Wikidata"]["api_url"], params, headers, "Wikidata sitelinks")
+        entities = response.get("entities", {})
+        for entity_id in batch:
+            entity = entities.get(entity_id, {})
+            sitelinks = entity.get("sitelinks", {})
+            WIKIDATA_SITELINK_CACHE[entity_id] = {
+                site_name: normalize_whitespace(site_data.get("title", ""))
+                for site_name, site_data in sitelinks.items()
+                if normalize_whitespace(site_data.get("title", ""))
+            }
+
+    return {
+        entity_id: WIKIDATA_SITELINK_CACHE.get(entity_id, {})
+        for entity_id in entity_ids
+    }
+
+
+def truncate_wikipedia_lead(text, max_chars=500):
+    text = normalize_whitespace(text)
+    if len(text) <= max_chars:
+        return text
+
+    sentence_match = re.search(r"^(.{120,500}?[.!?])\s", text)
+    if sentence_match:
+        return sentence_match.group(1).strip()
+    return text[:max_chars].rstrip(" ,;:") + "..."
+
+
+def fetch_plwiki_extract(page_title):
+    page_title = normalize_whitespace(page_title)
+    if not page_title:
+        return ""
+    if page_title in WIKIPEDIA_LEAD_CACHE:
+        return WIKIPEDIA_LEAD_CACHE[page_title]
+
+    headers = {"User-Agent": "EdycjaCyfrowa (PHC IHPAN) - Wikipedia lead enrichment"}
+    params = {
+        "action": "query",
+        "prop": "extracts",
+        "titles": page_title,
+        "redirects": 1,
+        "exintro": 1,
+        "explaintext": 1,
+        "format": "json",
+    }
+    response = get_json_response(PLWIKI_API_URL, params, headers, "plwiki extracts")
+    pages = response.get("query", {}).get("pages", {})
+    extract_text = ""
+    for page_data in pages.values():
+        extract_text = normalize_whitespace(page_data.get("extract", ""))
+        if extract_text:
+            break
+
+    extract_text = truncate_wikipedia_lead(extract_text)
+    WIKIPEDIA_LEAD_CACHE[page_title] = extract_text
+    return extract_text
+
+
+def search_plwiki_articles(query, limit=10):
+    query = normalize_whitespace(query)
+    if not query:
+        return []
+
+    headers = {"User-Agent": "EdycjaCyfrowa (PHC IHPAN) - plwiki person fallback"}
+    params = {
+        "action": "query",
+        "list": "search",
+        "srsearch": query,
+        "srlimit": limit,
+        "format": "json",
+    }
+    response = get_json_response(PLWIKI_API_URL, params, headers, "plwiki search")
+    return response.get("query", {}).get("search", [])
+
+
+def fetch_plwiki_pages_metadata(page_ids):
+    page_ids = [str(page_id) for page_id in dict.fromkeys(page_ids) if str(page_id).isdigit()]
+    if not page_ids:
+        return {}
+
+    missing_ids = [page_id for page_id in page_ids if page_id not in PLWIKI_PAGE_CACHE]
+    headers = {"User-Agent": "EdycjaCyfrowa (PHC IHPAN) - plwiki person fallback"}
+
+    for offset in range(0, len(missing_ids), 20):
+        batch = missing_ids[offset:offset + 20]
+        params = {
+            "action": "query",
+            "prop": "extracts|pageprops",
+            "pageids": "|".join(batch),
+            "redirects": 1,
+            "exintro": 1,
+            "explaintext": 1,
+            "ppprop": "wikibase_item",
+            "format": "json",
+        }
+        response = get_json_response(PLWIKI_API_URL, params, headers, "plwiki page metadata")
+        pages = response.get("query", {}).get("pages", {})
+        for page_id, page_data in pages.items():
+            PLWIKI_PAGE_CACHE[str(page_id)] = {
+                "pageid": str(page_id),
+                "title": normalize_whitespace(page_data.get("title", "")),
+                "extract": truncate_wikipedia_lead(page_data.get("extract", "")),
+                "wikibase_item": normalize_whitespace(
+                    page_data.get("pageprops", {}).get("wikibase_item", "")
+                ),
+            }
+
+    return {
+        page_id: PLWIKI_PAGE_CACHE.get(page_id, {})
+        for page_id in page_ids
+    }
+
+
+def extract_entity_id_values(claims, property_id):
+    values = []
+    for statement in claims.get(property_id, []):
+        mainsnak = statement.get("mainsnak", {})
+        datavalue = mainsnak.get("datavalue")
+        if not datavalue or datavalue.get("type") != "wikibase-entityid":
+            continue
+        value = datavalue.get("value", {})
+        entity_id = value.get("id")
+        if entity_id:
+            values.append(entity_id)
+    return list(dict.fromkeys(values))
+
+
+def collect_claim_reference_ids(entity):
+    value_ids = []
+    for statements in entity.get("claims", {}).values():
+        for statement in statements[:2]:
+            mainsnak = statement.get("mainsnak", {})
+            datavalue = mainsnak.get("datavalue")
+            if not datavalue or datavalue.get("type") != "wikibase-entityid":
+                continue
+            entity_id = datavalue.get("value", {}).get("id")
+            if entity_id:
+                value_ids.append(entity_id)
+    return list(dict.fromkeys(value_ids))
+
+
+def format_claim_value(datavalue, referenced_entities):
+    if not datavalue:
+        return None
+
+    value_type = datavalue.get("type")
+    value = datavalue.get("value")
+
+    if value_type == "wikibase-entityid":
+        entity_id = value.get("id")
+        referenced = referenced_entities.get(entity_id, {})
+        label_map = build_multilang_map(referenced.get("labels", {}))
+        return get_best_lang_value(label_map, entity_id or "")
+
+    if value_type == "string":
+        return normalize_whitespace(value)
+
+    if value_type == "monolingualtext":
+        return normalize_whitespace(value.get("text", ""))
+
+    if value_type == "time":
+        return format_time_value(value.get("time", ""))
+
+    if value_type == "quantity":
+        return normalize_whitespace(value.get("amount", ""))
+
+    return None
+
+
+def build_claim_facts(entity, property_entities, referenced_entities, limit=10):
+    facts = []
+    seen = set()
+    for property_id, statements in entity.get("claims", {}).items():
+        property_label_map = build_multilang_map(property_entities.get(property_id, {}).get("labels", {}))
+        property_label = get_best_lang_value(property_label_map, property_id)
+        for statement in statements[:2]:
+            mainsnak = statement.get("mainsnak", {})
+            value = format_claim_value(mainsnak.get("datavalue"), referenced_entities)
+            if not value:
+                continue
+            fact = f"{property_label}: {value}"
+            folded = fact.casefold()
+            if folded in seen:
+                continue
+            seen.add(folded)
+            facts.append(fact)
+            if len(facts) >= limit:
+                return facts
+    return facts
+
+
+def get_property_semantic_text(property_entity):
+    if not property_entity:
+        return ""
+    labels = extract_multilang_values(build_multilang_map(property_entity.get("labels", {})))
+    descriptions = extract_multilang_values(build_multilang_map(property_entity.get("descriptions", {})))
+    return " ".join(labels + descriptions).casefold()
+
+
+def extract_person_life_years(entity, property_entities):
+    birth_markers = {
+        "birth", "born", "date of birth", "birth date", "data urodzenia",
+        "urodzenia", "natal", "geburt"
+    }
+    death_markers = {
+        "death", "died", "date of death", "death date", "data śmierci",
+        "data smierci", "śmierci", "smierci", "obit", "mort", "sterb"
+    }
+
+    birth_years = []
+    death_years = []
+
+    for property_id, statements in entity.get("claims", {}).items():
+        property_entity = property_entities.get(property_id, {})
+        property_text = get_property_semantic_text(property_entity)
+        if not property_text:
+            continue
+
+        target_list = None
+        if any(marker in property_text for marker in birth_markers):
+            target_list = birth_years
+        elif any(marker in property_text for marker in death_markers):
+            target_list = death_years
+
+        if target_list is None:
+            continue
+
+        for statement in statements[:2]:
+            mainsnak = statement.get("mainsnak", {})
+            datavalue = mainsnak.get("datavalue")
+            if not datavalue or datavalue.get("type") != "time":
+                continue
+            year_text = format_time_value(datavalue.get("value", {}).get("time", ""))
+            if not year_text or not re.fullmatch(r"-?\d{3,4}", year_text):
+                continue
+            year = int(year_text)
+            if year not in target_list:
+                target_list.append(year)
+
+    birth_year = min(birth_years) if birth_years else None
+    death_year = max(death_years) if death_years else None
+    return birth_year, death_year
+
+
+def build_candidate_from_entity(source_config, entity_id, entity, property_entities, referenced_entities):
+    labels_map = build_multilang_map(entity.get("labels", {}))
+    descriptions_map = build_multilang_map(entity.get("descriptions", {}))
+    aliases_map = build_alias_map(entity.get("aliases", {}))
+
+    instance_of_ids = extract_entity_id_values(entity.get("claims", {}), source_config["instance_of_property"])
+    instance_of_entities = fetch_entities_map(source_config, instance_of_ids)
+    instance_of_texts = []
+    for class_id in instance_of_ids:
+        class_entity = instance_of_entities.get(class_id, {})
+        class_labels = extract_multilang_values(build_multilang_map(class_entity.get("labels", {})))
+        class_descs = extract_multilang_values(build_multilang_map(class_entity.get("descriptions", {})))
+        instance_of_texts.extend(class_labels)
+        instance_of_texts.extend(class_descs)
+
+    birth_year, death_year = extract_person_life_years(entity, property_entities)
+
+    candidate = {
+        "id": entity_id,
+        "source": source_config["source"],
+        "url": f"{source_config['entity_base_url']}/{entity_id}",
+        "name": get_best_lang_value(labels_map, entity_id),
+        "labels": labels_map,
+        "descriptions": descriptions_map,
+        "aliases": aliases_map,
+        "instance_of_ids": instance_of_ids,
+        "instance_of_texts": _normalize_string_list(instance_of_texts, min_length=2),
+        "claim_facts": build_claim_facts(entity, property_entities, referenced_entities),
+        "birth_year": birth_year,
+        "death_year": death_year,
+        "matched_queries": [],
+    }
+    candidate["desc"] = get_best_lang_value(descriptions_map, "Brak opisu")
+    return candidate
+
+
+def build_candidates_from_entity_ids(source_config, entity_ids):
+    entities_map = fetch_entities_map(source_config, entity_ids)
+    property_ids = []
+    referenced_ids = []
+
+    for entity_id in entity_ids:
+        entity = entities_map.get(entity_id, {})
+        property_ids.extend(entity.get("claims", {}).keys())
+        referenced_ids.extend(collect_claim_reference_ids(entity))
+
+    property_entities = fetch_entities_map(source_config, property_ids[:60])
+    referenced_entities = fetch_entities_map(source_config, referenced_ids[:80])
+
+    candidates = []
+    for entity_id in entity_ids:
+        entity = entities_map.get(entity_id, {})
+        if not entity:
+            continue
+        candidates.append(
+            build_candidate_from_entity(
+                source_config,
+                entity_id,
+                entity,
+                property_entities,
+                referenced_entities,
+            )
+        )
+    return candidates
+
+
+def search_wikibase_special(query, source_config):
+    """Wyszukuje kandydatów wyłącznie przez Special:Search/Cirrus z rozmyciem ~2."""
+    fuzzy_query = build_fuzzy_search_query(query)
+    if not fuzzy_query:
+        return []
+
+    headers = {"User-Agent": "EdycjaCyfrowa (PHC IHPAN) - skrypt badawczy"}
+    params = {
+        "action": "query",
+        "list": "search",
+        "srsearch": fuzzy_query,
+        "srnamespace": "0|120",
+        "srlimit": 8,
+        "format": "json",
+    }
+
+    response = get_json_response(source_config["api_url"], params, headers, source_config["source"])
+    hits = response.get("query", {}).get("search", [])
+    entity_ids = []
+    for hit in hits:
+        entity_id = extract_qid_from_title(hit.get("title", ""))
+        if entity_id:
+            entity_ids.append(entity_id)
+
+    entity_ids = list(dict.fromkeys(entity_ids))
+    diagnostic_log(
+        f"Special:Search '{query}' -> {source_config['source']}: {entity_ids}"
+    )
+    return build_candidates_from_entity_ids(source_config, entity_ids)
+
+
+# ------------------------------- FILTERING -----------------------------------
+def candidate_type_text(candidate):
+    return " ".join(candidate.get("instance_of_texts", [])).casefold()
+
+
+def candidate_is_human(candidate, source_config):
+    instance_of_ids = set(candidate.get("instance_of_ids", []))
+    if instance_of_ids & source_config["person_type_ids"]:
+        return True
+    type_text = candidate_type_text(candidate)
+    return any(marker in type_text for marker in HUMAN_TYPE_MARKERS)
+
+
+def candidate_is_place(candidate, source_config):
+    if candidate_is_human(candidate, source_config):
         return False
-    if tag_type == 'persName' and any(marker in haystack for marker in office_markers):
+
+    instance_of_ids = set(candidate.get("instance_of_ids", []))
+    if instance_of_ids & source_config["place_type_ids"]:
+        return True
+
+    type_text = candidate_type_text(candidate)
+    return any(marker in type_text for marker in PLACE_TYPE_MARKERS)
+
+
+def filter_candidates_by_tag(candidates, tag_type, source_config):
+    filtered = []
+    for candidate in candidates:
+        if tag_type == "persName" and candidate_is_human(candidate, source_config):
+            filtered.append(candidate)
+        elif tag_type == "placeName" and candidate_is_place(candidate, source_config):
+            filtered.append(candidate)
+
+    diagnostic_log(
+        f"Filtrowanie {source_config['source']} dla {tag_type}: "
+        f"{[f'{candidate['source']}:{candidate['id']}' for candidate in filtered]}"
+    )
+    return filtered
+
+
+def expand_office_terms(office_terms):
+    """Dodaje kilka prostych wariantów urzędów pomocnych w wyszukiwaniu."""
+    expansions = []
+    seen = set()
+    replacements = {
+        "cardinalis": ["kardynał", "kardynal", "cardinal"],
+        "episcopus": ["biskup", "bishop"],
+        "archiepiscopus": ["arcybiskup", "archbishop"],
+        "rex": ["król", "krol", "king"],
+        "regina": ["królowa", "krolowa", "queen"],
+        "dux": ["książę", "ksiaze", "duke"],
+    }
+
+    for office_term in office_terms or []:
+        normalized_term = normalize_whitespace(office_term)
+        if len(normalized_term) < 3:
+            continue
+        lowered = normalized_term.casefold()
+        if lowered not in seen:
+            seen.add(lowered)
+            expansions.append(normalized_term)
+        for marker, variants in replacements.items():
+            if marker in lowered:
+                for variant in variants:
+                    variant_lowered = variant.casefold()
+                    if variant_lowered in seen:
+                        continue
+                    seen.add(variant_lowered)
+                    expansions.append(variant)
+    return expansions
+
+
+def expand_place_terms(place_terms):
+    """Dodaje prostsze warianty określeń miejscowych przydatne w wyszukiwaniu."""
+    expansions = []
+    seen = set()
+
+    for place_term in place_terms or []:
+        normalized_term = normalize_whitespace(place_term)
+        if len(normalized_term) < 3:
+            continue
+
+        variants = [normalized_term]
+        tokens = [token for token in re.split(r"[\s,()]+", normalized_term) if len(token) >= 3]
+        if tokens:
+            variants.append(tokens[-1])
+            if len(tokens) >= 2:
+                variants.append(" ".join(tokens[-2:]))
+
+        for variant in variants:
+            folded = variant.casefold()
+            if folded in seen:
+                continue
+            seen.add(folded)
+            expansions.append(variant)
+
+    return expansions
+
+
+def infer_office_families(values):
+    text = " ".join(normalize_whitespace(value) for value in values or []).casefold()
+    families = []
+    for family_name, family_data in SEMANTIC_FALLBACK_OFFICE_FAMILIES.items():
+        if any(trigger in text for trigger in family_data["triggers"]):
+            families.append(family_name)
+    return families
+
+
+def build_semantic_place_signals(entity_analysis):
+    signals = []
+    raw_values = list(entity_analysis.get("place_terms", [])) + list(entity_analysis.get("context_clues", []))
+    for value in raw_values:
+        normalized_value = normalize_whitespace(value)
+        if len(normalized_value) < 3:
+            continue
+        signals.append(normalized_value)
+        for token in re.split(r"[\s,():;\-]+", normalized_value):
+            token = normalize_whitespace(token)
+            if len(token) < 4:
+                continue
+            if normalize_for_lookup(token) in GENERIC_PLACE_SIGNAL_TOKENS:
+                continue
+            signals.append(token)
+            polish_equivalent = get_polish_equivalent(token, "placeName")
+            if polish_equivalent:
+                signals.append(polish_equivalent)
+    return _normalize_string_list(signals, min_length=3)[:8]
+
+
+def build_semantic_person_profile(entity_analysis):
+    name_variants = _normalize_string_list(
+        list(entity_analysis.get("lemma_candidates", [])) +
+        list(entity_analysis.get("surface_variants", [])),
+        min_length=2,
+    )[:4]
+    office_source_values = list(entity_analysis.get("office_terms", [])) + list(entity_analysis.get("context_clues", []))
+    office_families = infer_office_families(office_source_values)
+    office_keywords = []
+    office_entity_ids = []
+    for family_name in office_families:
+        office_keywords.extend(SEMANTIC_FALLBACK_OFFICE_FAMILIES[family_name]["keywords"])
+        office_entity_ids.extend(SEMANTIC_FALLBACK_OFFICE_FAMILIES[family_name].get("entity_ids", []))
+    office_keywords.extend(expand_office_terms(entity_analysis.get("office_terms", [])))
+    office_keywords = _normalize_string_list(office_keywords, min_length=3)[:10]
+    office_entity_ids = list(dict.fromkeys(office_entity_ids))
+    place_signals = build_semantic_place_signals(entity_analysis)
+    context_years = sorted(entity_analysis.get("context_years", []))
+
+    return {
+        "name_variants": name_variants,
+        "office_families": office_families,
+        "office_keywords": office_keywords,
+        "office_entity_ids": office_entity_ids,
+        "place_signals": place_signals,
+        "year_min": min(context_years) if context_years else None,
+        "year_max": max(context_years) if context_years else None,
+        "context_years": context_years,
+    }
+
+
+def should_use_wikidata_semantic_fallback(entity_analysis, tag_type, decision, candidates):
+    if tag_type != "persName":
+        return False, "not_persName"
+    if decision.get("status") == "selected":
+        return False, "already_selected"
+
+    profile = build_semantic_person_profile(entity_analysis)
+    has_office = bool(profile["office_families"] or entity_analysis.get("office_terms"))
+    has_place = bool(profile["place_signals"])
+    has_years = bool(profile["context_years"])
+    strong_signal_count = sum([has_office, has_place, has_years])
+
+    if strong_signal_count < 2:
+        return False, "insufficient_semantic_signals"
+
+    if not (has_office or has_place):
+        return False, "missing_office_or_place_signal"
+
+    if candidates and any(candidate.get("source") == "Wikidata" for candidate in candidates):
+        return True, "standard_wikidata_failed"
+    return True, "direct_semantic_retry"
+
+
+def build_sparql_regex_pattern(values, *, min_length=3, limit=6):
+    pattern_values = []
+    for value in values or []:
+        normalized_value = build_casefold_lookup(value)
+        if len(normalized_value) < min_length:
+            continue
+        escaped_value = re.escape(normalized_value)
+        escaped_value = escaped_value.replace(r"\ ", " ")
+        escaped_value = escape_sparql_string_literal(escaped_value)
+        pattern_values.append(escaped_value)
+    pattern_values = list(dict.fromkeys(pattern_values))[:limit]
+    if not pattern_values:
+        return ""
+    return "(" + "|".join(pattern_values) + ")"
+
+
+def build_sparql_contains_terms(values, *, min_length=3, limit=6):
+    terms = []
+    for value in values or []:
+        normalized_value = build_casefold_lookup(value)
+        if len(normalized_value) < min_length:
+            continue
+        terms.append(escape_sparql_string_literal(normalized_value))
+    return list(dict.fromkeys(terms))[:limit]
+
+
+def build_sparql_contains_filter(variable_name, values):
+    terms = [value for value in values or [] if value]
+    if not terms:
+        return ""
+    conditions = [
+        f'CONTAINS(LCASE(STR({variable_name})), "{term}")'
+        for term in terms
+    ]
+    return "FILTER(" + " || ".join(conditions) + ")"
+
+
+def build_wikidata_values_fragment(variable_name, entity_ids):
+    qids = [entity_id for entity_id in entity_ids or [] if re.fullmatch(r"Q\d+", str(entity_id))]
+    if not qids:
+        return ""
+    values = " ".join(f"wd:{entity_id}" for entity_id in qids)
+    return f"VALUES {variable_name} {{ {values} }}"
+
+
+def build_wikidata_semantic_query_specs(profile):
+    name_terms = build_sparql_contains_terms(profile.get("name_variants", []), min_length=2, limit=5)
+    office_terms = build_sparql_contains_terms(profile.get("office_keywords", []), min_length=3, limit=8)
+    place_terms = build_sparql_contains_terms(profile.get("place_signals", []), min_length=4, limit=6)
+    office_entity_ids = list(profile.get("office_entity_ids", []))
+
+    query_specs = []
+    if name_terms and (office_entity_ids or office_terms):
+        query_specs.append({
+            "mode": "name_office",
+            "label": "SPARQL:name+office",
+            "name_terms": name_terms,
+            "office_terms": office_terms,
+            "office_entity_ids": office_entity_ids,
+            "place_terms": [],
+            "year_min": profile.get("year_min"),
+            "year_max": profile.get("year_max"),
+        })
+    if name_terms and place_terms:
+        query_specs.append({
+            "mode": "name_place",
+            "label": "SPARQL:name+place",
+            "name_terms": name_terms,
+            "office_terms": office_terms,
+            "office_entity_ids": office_entity_ids,
+            "place_terms": place_terms,
+            "year_min": profile.get("year_min"),
+            "year_max": profile.get("year_max"),
+        })
+    return query_specs[:2]
+
+
+def build_wikidata_year_filter_fragment(year_min, year_max):
+    if year_min is None or year_max is None:
+        return ""
+
+    lower_bound = year_min - MAX_REASONABLE_LIFESPAN_YEARS
+    upper_bound = year_max + MAX_REASONABLE_LIFESPAN_YEARS
+    return f"""
+  OPTIONAL {{ ?person wdt:P569 ?birthDate . }}
+  OPTIONAL {{ ?person wdt:P570 ?deathDate . }}
+  FILTER(!BOUND(?birthDate) || YEAR(?birthDate) <= {upper_bound})
+  FILTER(!BOUND(?deathDate) || YEAR(?deathDate) >= {lower_bound})
+"""
+
+
+def compile_wikidata_person_sparql(query_spec):
+    office_fragment = ""
+    office_entity_ids = query_spec.get("office_entity_ids", [])
+    office_terms = query_spec.get("office_terms", [])
+    if office_entity_ids:
+        office_values = build_wikidata_values_fragment("?officeExact", office_entity_ids)
+        office_fragment = f"""
+  {office_values}
+  ?person (wdt:P39|wdt:P106) ?officeExact .
+"""
+    elif office_terms:
+        office_contains_filter = build_sparql_contains_filter("?officeLabel", office_terms)
+        position_contains_filter = build_sparql_contains_filter("?positionLabel", office_terms)
+        office_fragment = f"""
+  {{
+    {{
+      ?person wdt:P106 ?officeItem .
+      ?officeItem rdfs:label ?officeLabel .
+      FILTER(LANG(?officeLabel) IN ("pl","la"))
+      {office_contains_filter}
+    }}
+    UNION
+    {{
+      ?person wdt:P39 ?positionItem .
+      ?positionItem rdfs:label ?positionLabel .
+      FILTER(LANG(?positionLabel) IN ("pl","la"))
+      {position_contains_filter}
+    }}
+  }}
+"""
+
+    place_fragment = ""
+    place_terms = query_spec.get("place_terms", [])
+    if place_terms:
+        place_position_filter = build_sparql_contains_filter("?placePositionLabel", place_terms)
+        place_label_filter = build_sparql_contains_filter("?placeLabel", place_terms)
+        place_fragment = f"""
+  {{
+    {{
+      ?person wdt:P39 ?placePositionItem .
+      ?placePositionItem rdfs:label ?placePositionLabel .
+      FILTER(LANG(?placePositionLabel) IN ("pl","la"))
+      {place_position_filter}
+    }}
+    UNION
+    {{
+      VALUES ?placeProp {{ wdt:P19 wdt:P20 wdt:P27 wdt:P551 wdt:P937 }}
+      ?person ?placeProp ?placeEntity .
+      ?placeEntity rdfs:label ?placeLabel .
+      FILTER(LANG(?placeLabel) IN ("pl","la"))
+      {place_label_filter}
+    }}
+  }}
+"""
+
+    year_fragment = build_wikidata_year_filter_fragment(
+        query_spec.get("year_min"),
+        query_spec.get("year_max"),
+    )
+
+    name_contains_filter = build_sparql_contains_filter("?personLabel", query_spec.get("name_terms", []))
+
+    return f"""
+PREFIX wd: <http://www.wikidata.org/entity/>
+PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX bd: <http://www.bigdata.com/rdf#>
+PREFIX wikibase: <http://wikiba.se/ontology#>
+
+SELECT DISTINCT ?person ?personLabel ?birthDate ?deathDate WHERE {{
+  ?person wdt:P31 wd:Q5 .
+  ?person rdfs:label ?personLabel .
+  FILTER(LANG(?personLabel) IN ("pl","la"))
+  {name_contains_filter}
+{office_fragment}{place_fragment}{year_fragment}
+  SERVICE wikibase:label {{ bd:serviceParam wikibase:language "pl,la,en". }}
+}}
+ORDER BY ?birthDate
+LIMIT 50
+""".strip()
+
+
+def run_wikidata_sparql_query(query):
+    headers = {
+        "Accept": "application/sparql-results+json",
+        "User-Agent": "EdycjaCyfrowa (PHC IHPAN) - Wikidata semantic fallback",
+    }
+    params = {
+        "query": query,
+        "format": "json",
+    }
+    response = get_json_response(WIKIDATA_SPARQL_URL, params, headers, "Wikidata SPARQL")
+    return response.get("results", {}).get("bindings", [])
+
+
+def extract_entity_ids_from_sparql_bindings(bindings):
+    entity_ids = []
+    for row in bindings:
+        person_value = row.get("person", {}).get("value", "")
+        match = re.search(r"/(Q\d+)$", person_value)
+        if match:
+            entity_ids.append(match.group(1))
+    return list(dict.fromkeys(entity_ids))
+
+
+def build_candidate_text_corpus(candidate):
+    values = [candidate.get("name", ""), candidate.get("desc", "")]
+    values.extend(extract_multilang_values(candidate.get("labels", {})))
+    values.extend(extract_multilang_values(candidate.get("descriptions", {})))
+    values.append(candidate.get("wikipedia_lead", ""))
+    for aliases in candidate.get("aliases", {}).values():
+        values.extend(aliases)
+    values.extend(candidate.get("instance_of_texts", []))
+    values.extend(candidate.get("claim_facts", []))
+    return [normalize_for_lookup(value) for value in values if normalize_for_lookup(value)]
+
+
+def candidate_matches_keywords(candidate, keywords):
+    if not keywords:
         return False
-    if tag_type == 'persName' and any(marker in haystack for marker in place_markers):
+    corpus = build_candidate_text_corpus(candidate)
+    normalized_keywords = [normalize_for_lookup(keyword) for keyword in keywords if normalize_for_lookup(keyword)]
+    for keyword in normalized_keywords:
+        if any(keyword in text for text in corpus):
+            return True
+    return False
+
+
+def candidate_office_semantic_score(candidate, profile):
+    score = 0
+    for family_name in profile.get("office_families", []):
+        family_keywords = SEMANTIC_FALLBACK_OFFICE_FAMILIES.get(family_name, {}).get("keywords", [])
+        if candidate_matches_keywords(candidate, family_keywords):
+            score += 6
+    raw_office_keywords = profile.get("office_keywords", [])[:6]
+    if candidate_matches_keywords(candidate, raw_office_keywords):
+        score += 3
+    return score
+
+
+def candidate_place_semantic_score(candidate, profile):
+    matched_signals = 0
+    corpus = build_candidate_text_corpus(candidate)
+    for signal in profile.get("place_signals", [])[:6]:
+        normalized_signal = normalize_for_lookup(signal)
+        if not normalized_signal:
+            continue
+        if any(normalized_signal in text for text in corpus):
+            matched_signals += 1
+    return min(matched_signals, 2) * 3
+
+
+def candidate_specificity_penalty(candidate):
+    penalty = 0
+    description_text = normalize_whitespace(" ".join(extract_multilang_values(candidate.get("descriptions", {}))))
+    wikipedia_lead = normalize_whitespace(candidate.get("wikipedia_lead", ""))
+    aliases_count = sum(len(values) for values in candidate.get("aliases", {}).values())
+    claim_facts_count = len(candidate.get("claim_facts", []))
+    name_text = normalize_whitespace(candidate.get("name", ""))
+
+    if len(description_text) < 12 and len(wikipedia_lead) < 40:
+        penalty += 4
+    if aliases_count == 0:
+        penalty += 2
+    if claim_facts_count == 0 and len(wikipedia_lead) < 40:
+        penalty += 2
+    if len(name_text.split()) == 1:
+        penalty += 2
+
+    return penalty
+
+
+def score_semantic_fallback_candidate(candidate, profile, entity_analysis):
+    return (
+        candidate_name_quality(candidate, entity_analysis) * 5
+        + candidate_temporal_rank(candidate, entity_analysis) * 5
+        + candidate_office_semantic_score(candidate, profile)
+        + candidate_place_semantic_score(candidate, profile)
+        + len(candidate.get("matched_queries", []))
+        - candidate_specificity_penalty(candidate)
+    )
+
+
+def filter_and_rank_semantic_fallback_candidates(candidates, profile, entity_analysis):
+    enriched = []
+    for candidate in candidates:
+        if not candidate_is_human(candidate, WIKIBASE_SOURCES["Wikidata"]):
+            continue
+        semantic_score = score_semantic_fallback_candidate(candidate, profile, entity_analysis)
+        if semantic_score <= 0:
+            continue
+        candidate["semantic_fallback_score"] = semantic_score
+        enriched.append(candidate)
+
+    enriched.sort(
+        key=lambda candidate: (
+            -candidate.get("semantic_fallback_score", 0),
+            -candidate_temporal_rank(candidate, entity_analysis),
+            -candidate_name_quality(candidate, entity_analysis),
+            candidate.get("name", ""),
+        )
+    )
+
+    diagnostic_log(
+        f"Ranking fallbacku semantycznego dla '{entity_analysis['surface']}' (persName): "
+        f"{[f'{candidate['source']}:{candidate['id']} score={candidate.get('semantic_fallback_score', 0)}' for candidate in enriched[:8]]}"
+    )
+    return enriched[:8]
+
+
+def collect_wikidata_semantic_fallback_candidates(entity_analysis):
+    profile = build_semantic_person_profile(entity_analysis)
+    query_specs = build_wikidata_semantic_query_specs(profile)
+    diagnostic_log(
+        f"Profil fallbacku semantycznego dla '{entity_analysis['surface']}' (persName): "
+        f"names={profile['name_variants']}, office_families={profile['office_families']}, "
+        f"office_entity_ids={profile['office_entity_ids']}, office_keywords={profile['office_keywords'][:6]}, "
+        f"place_signals={profile['place_signals'][:6]}, "
+        f"context_years={profile['context_years']}"
+    )
+
+    if not query_specs:
+        diagnostic_log(
+            f"Fallback semantyczny dla '{entity_analysis['surface']}' (persName) pominięty: brak query specs."
+        )
+        return []
+
+    collected_candidates = []
+    for query_spec in query_specs:
+        sparql_query = compile_wikidata_person_sparql(query_spec)
+        diagnostic_log(
+            f"Uruchamiam fallback semantyczny {query_spec['label']} dla '{entity_analysis['surface']}' (persName)."
+        )
+        diagnostic_log(
+            f"Zapytanie {query_spec['label']} dla '{entity_analysis['surface']}' (persName): "
+            f"{normalize_whitespace(sparql_query)}"
+        )
+        try:
+            bindings = run_wikidata_sparql_query(sparql_query)
+            entity_ids = extract_entity_ids_from_sparql_bindings(bindings)
+            diagnostic_log(
+                f"Wyniki {query_spec['label']} dla '{entity_analysis['surface']}' (persName): {entity_ids}"
+            )
+        except Exception as exc:
+            diagnostic_log(
+                f"Błąd fallbacku semantycznego {query_spec['label']} dla "
+                f"'{entity_analysis['surface']}' (persName): {exc}"
+            )
+            continue
+
+        wikidata_candidates = build_candidates_from_entity_ids(WIKIBASE_SOURCES["Wikidata"], entity_ids)
+        filtered_candidates = filter_candidates_by_tag(
+            wikidata_candidates,
+            "persName",
+            WIKIBASE_SOURCES["Wikidata"],
+        )
+        for candidate in filtered_candidates:
+            if query_spec["label"] not in candidate["matched_queries"]:
+                candidate["matched_queries"].append(query_spec["label"])
+        collected_candidates.extend(filtered_candidates)
+
+    deduped_candidates = dedupe_candidates(collected_candidates)
+    diagnostic_log(
+        f"Wzbogacam kandydatów fallbacku semantycznego Wikipedią dla "
+        f"'{entity_analysis['surface']}' (persName) przed rankingiem."
+    )
+    try:
+        deduped_candidates = enrich_wikidata_candidates_with_plwiki_leads(deduped_candidates, limit=12)
+    except Exception as exc:
+        diagnostic_log(
+            f"Błąd wzbogacania fallbacku semantycznego Wikipedią dla "
+            f"'{entity_analysis['surface']}' (persName): {exc}"
+        )
+    ranked_candidates = filter_and_rank_semantic_fallback_candidates(
+        deduped_candidates,
+        profile,
+        entity_analysis,
+    )
+    diagnostic_log_temporal_candidates(entity_analysis, "persName", ranked_candidates, "wikidata_semantic_fallback")
+    return ranked_candidates
+
+
+def candidate_needs_wikipedia_lead(candidate):
+    if candidate.get("source") != "Wikidata":
         return False
-    if tag_type == 'placeName' and any(marker in haystack for marker in person_markers | office_markers):
+    description_text = " ".join(extract_multilang_values(candidate.get("descriptions", {})))
+    description_text = normalize_whitespace(description_text)
+    if len(description_text) >= 40:
+        return False
+    if len(candidate.get("claim_facts", [])) >= 4:
         return False
     return True
 
 
-def enrich_wikibase_entities(ids, api_url, source_label, entity_base_url):
-    """Pobiera etykiety i opisy dla znalezionych identyfikatorów encji."""
-    if not ids:
+def should_enrich_candidates_with_wikipedia(tag_type, candidates):
+    if tag_type != "persName":
+        return False
+    if len(candidates) < 2:
+        return False
+    return any(candidate_needs_wikipedia_lead(candidate) for candidate in candidates[:12])
+
+
+def enrich_wikidata_candidates_with_plwiki_leads(candidates, limit=12):
+    wikidata_candidates = [
+        candidate for candidate in candidates[:limit]
+        if candidate_needs_wikipedia_lead(candidate)
+    ]
+    if not wikidata_candidates:
+        return candidates
+
+    sitelinks_map = fetch_wikidata_sitelinks([candidate["id"] for candidate in wikidata_candidates])
+    for candidate in wikidata_candidates:
+        plwiki_title = sitelinks_map.get(candidate["id"], {}).get("plwiki", "")
+        if not plwiki_title:
+            diagnostic_log(
+                f"Brak plwiki sitelink dla {candidate['source']}:{candidate['id']} ({candidate.get('name', '?')})."
+            )
+            continue
+
+        wikipedia_lead = fetch_plwiki_extract(plwiki_title)
+        if wikipedia_lead:
+            candidate["wikipedia_lead"] = wikipedia_lead
+            candidate["wikipedia_source"] = "plwiki"
+            diagnostic_log(
+                f"Pobrano plwiki lead dla {candidate['source']}:{candidate['id']} -> '{plwiki_title}'."
+            )
+        else:
+            diagnostic_log(
+                f"Nie udało się pobrać plwiki lead dla {candidate['source']}:{candidate['id']} -> '{plwiki_title}'."
+            )
+    return candidates
+
+
+def title_matches_person_name(title, name_variants):
+    title_norm = normalize_for_lookup(title)
+    if not title_norm:
+        return False
+
+    for value in name_variants or []:
+        value_norm = normalize_for_lookup(value)
+        if len(value_norm) < 3:
+            continue
+        first_token = value_norm.split()[0]
+        if len(first_token) < 3:
+            continue
+        if first_token in title_norm:
+            return True
+    return False
+
+
+def build_plwiki_person_fallback_queries(entity_analysis):
+    raw_name_variants = augment_with_polish_equivalents(
+        "persName",
+        list(entity_analysis.get("lemma_candidates", [])) +
+        list(entity_analysis.get("surface_variants", [])) +
+        [entity_analysis.get("normalized_best")],
+    )
+    name_variants = prioritize_polish_person_variants(raw_name_variants)[:4]
+    place_phrases = build_plwiki_place_phrases(entity_analysis)
+    office_phrases = build_plwiki_office_phrases(entity_analysis, place_phrases)
+
+    queries = []
+    seen = set()
+
+    def add_query(value):
+        value = normalize_whitespace(value)
+        if len(value) < 4:
+            return
+        folded = value.casefold()
+        if folded in seen:
+            return
+        seen.add(folded)
+        queries.append(value)
+
+    strong_queries = []
+    medium_queries = []
+    weak_queries = []
+
+    for name_variant in name_variants:
+        for office_phrase in office_phrases[:5]:
+            strong_queries.append(f"{name_variant} {office_phrase}")
+        for place_phrase in place_phrases[:3]:
+            medium_queries.append(f"{name_variant} {place_phrase}")
+        weak_queries.append(name_variant)
+
+    for query in strong_queries + medium_queries + weak_queries:
+        add_query(query)
+
+    return queries[:12]
+
+
+def should_use_plwiki_person_fallback(entity_analysis, tag_type, decision):
+    if tag_type != "persName":
+        return False, "not_persName"
+    if decision.get("status") == "selected":
+        return False, "already_selected"
+    if not entity_analysis.get("office_terms") and not entity_analysis.get("place_terms"):
+        return False, "no_office_or_place_terms"
+    return True, "standard_linking_failed"
+
+
+def collect_plwiki_person_fallback_candidates(entity_analysis):
+    queries = build_plwiki_person_fallback_queries(entity_analysis)
+    diagnostic_log(
+        f"Plan fallbacku plwiki dla '{entity_analysis['surface']}' (persName): {queries}"
+    )
+    if not queries:
         return []
+
+    name_variants = prioritize_polish_person_variants(
+        augment_with_polish_equivalents(
+            "persName",
+            list(entity_analysis.get("lemma_candidates", [])) +
+            list(entity_analysis.get("surface_variants", [])) +
+            [entity_analysis.get("normalized_best")],
+        )
+    )
+    page_hits = {}
+
+    for query in queries:
+        try:
+            search_hits = search_plwiki_articles(query, limit=15)
+        except Exception as exc:
+            diagnostic_log(
+                f"Błąd wyszukiwania plwiki dla '{entity_analysis['surface']}' (persName), query='{query}': {exc}"
+            )
+            continue
+
+        hit_titles = [normalize_whitespace(hit.get("title", "")) for hit in search_hits]
+        diagnostic_log(
+            f"plwiki search '{query}' dla '{entity_analysis['surface']}' (persName): {hit_titles}"
+        )
+
+        for hit in search_hits:
+            page_id = str(hit.get("pageid", "")).strip()
+            title = normalize_whitespace(hit.get("title", ""))
+            if not page_id or not title:
+                continue
+            if not title_matches_person_name(title, name_variants):
+                continue
+
+            page_entry = page_hits.setdefault(
+                page_id,
+                {
+                    "pageid": page_id,
+                    "title": title,
+                    "matched_queries": [],
+                },
+            )
+            if query not in page_entry["matched_queries"]:
+                page_entry["matched_queries"].append(query)
+
+    if not page_hits:
+        diagnostic_log(
+            f"Fallback plwiki nie zwrócił trafień tytułowych dla '{entity_analysis['surface']}' (persName)."
+        )
+        return []
+
+    pages_metadata = fetch_plwiki_pages_metadata(page_hits.keys())
+    wikidata_hits = []
+    qid_to_page = {}
+    for page_id, page_entry in page_hits.items():
+        metadata = pages_metadata.get(page_id, {})
+        wikibase_item = metadata.get("wikibase_item", "")
+        if not re.fullmatch(r"Q\d+", wikibase_item):
+            continue
+
+        qid_to_page[wikibase_item] = {
+            "title": metadata.get("title") or page_entry.get("title", ""),
+            "extract": metadata.get("extract", ""),
+            "matched_queries": page_entry.get("matched_queries", []),
+        }
+        wikidata_hits.append(wikibase_item)
+
+    wikidata_hits = list(dict.fromkeys(wikidata_hits))
+    diagnostic_log(
+        f"Kandydaci QID z plwiki dla '{entity_analysis['surface']}' (persName): {wikidata_hits}"
+    )
+    if not wikidata_hits:
+        return []
+
+    candidates = build_candidates_from_entity_ids(WIKIBASE_SOURCES["Wikidata"], wikidata_hits)
+    candidates = filter_candidates_by_tag(candidates, "persName", WIKIBASE_SOURCES["Wikidata"])
+
+    for candidate in candidates:
+        page_data = qid_to_page.get(candidate["id"], {})
+        if page_data.get("extract"):
+            candidate["wikipedia_lead"] = page_data["extract"]
+            candidate["wikipedia_source"] = "plwiki_search"
+        if page_data.get("title"):
+            candidate["wikipedia_title"] = page_data["title"]
+        for query in page_data.get("matched_queries", []):
+            if query not in candidate["matched_queries"]:
+                candidate["matched_queries"].append(query)
+
+    ordered = order_candidates_for_review(dedupe_candidates(candidates), entity_analysis)[:10]
+    diagnostic_log(
+        f"Uporządkowani kandydaci z fallbacku plwiki dla '{entity_analysis['surface']}' (persName): "
+        f"{[f'{candidate['source']}:{candidate['id']}' for candidate in ordered]}"
+    )
+    diagnostic_log_temporal_candidates(entity_analysis, "persName", ordered, "plwiki_fallback")
+    return ordered
+
+
+def build_query_plan(entity_analysis):
+    queries = []
+    seen = set()
+
+    def add_query(value):
+        value = normalize_whitespace(value)
+        if len(value) < 2:
+            return
+        folded = value.casefold()
+        if folded in seen:
+            return
+        seen.add(folded)
+        queries.append(value)
+
+    add_query(entity_analysis.get("surface"))
+    add_query(entity_analysis.get("normalized_best"))
+
+    for value in entity_analysis.get("lemma_candidates", [])[:3]:
+        add_query(value)
+
+    for value in entity_analysis.get("surface_variants", [])[:2]:
+        add_query(value)
+
+    if entity_analysis.get("tag_type") == "persName":
+        base_names = entity_analysis.get("lemma_candidates", [])[:2] or [entity_analysis.get("normalized_best")]
+        office_terms = expand_office_terms(entity_analysis.get("office_terms", []))[:4]
+        place_terms = expand_place_terms(entity_analysis.get("place_terms", []))[:4]
+        for base_name in base_names:
+            for office_term in office_terms[:2]:
+                add_query(f"{base_name} {office_term}")
+            for place_term in place_terms[:2]:
+                add_query(f"{base_name} {place_term}")
+            if office_terms and place_terms:
+                add_query(f"{base_name} {office_terms[0]} {place_terms[0]}")
+
+    if entity_analysis.get("tag_type") == "placeName":
+        base_names = entity_analysis.get("lemma_candidates", [])[:2] or [entity_analysis.get("normalized_best")]
+        place_terms = expand_place_terms(entity_analysis.get("place_terms", []))[:3]
+        for base_name in base_names:
+            for place_term in place_terms[:2]:
+                add_query(f"{base_name} {place_term}")
+
+    return queries[:12]
+
+
+def candidate_name_quality(candidate, entity_analysis):
+    surface = normalize_for_lookup(entity_analysis.get("surface", ""))
+    normalized = normalize_for_lookup(entity_analysis.get("normalized_best", ""))
+    names = [candidate.get("name", "")]
+    names.extend(extract_multilang_values(candidate.get("labels", {})))
+    for aliases in candidate.get("aliases", {}).values():
+        names.extend(aliases)
+    normalized_names = {normalize_for_lookup(name) for name in names if normalize_for_lookup(name)}
+
+    if surface and surface in normalized_names:
+        return 3
+    if normalized and normalized in normalized_names:
+        return 2
+    if any(surface and surface in name for name in normalized_names):
+        return 1
+    if any(normalized and normalized in name for name in normalized_names):
+        return 1
+    return 0
+
+
+def assess_candidate_temporal_fit(candidate, entity_analysis):
+    context_years = sorted(entity_analysis.get("context_years", []))
+    if not context_years:
+        return {"status": "unknown", "reason": "no_context_years"}
+
+    birth_year = candidate.get("birth_year")
+    death_year = candidate.get("death_year")
+    if birth_year is None and death_year is None:
+        return {"status": "unknown", "reason": "no_life_years"}
+
+    inferred_birth = None
+    inferred_death = None
+    if birth_year is None and death_year is not None:
+        inferred_birth = death_year - MAX_REASONABLE_LIFESPAN_YEARS
+        birth_year = inferred_birth
+    if death_year is None and birth_year is not None:
+        inferred_death = birth_year + MAX_REASONABLE_LIFESPAN_YEARS
+        death_year = inferred_death
+
+    min_context_year = min(context_years)
+    max_context_year = max(context_years)
+
+    if death_year is not None and min_context_year > death_year:
+        reason_suffix = ""
+        if inferred_death is not None:
+            reason_suffix = f"; przyjęto maks. długość życia {MAX_REASONABLE_LIFESPAN_YEARS} lat"
+        return {
+            "status": "conflict",
+            "reason": f"kontekst po śmierci kandydata ({death_year}){reason_suffix}",
+        }
+    if birth_year is not None and max_context_year < birth_year:
+        reason_suffix = ""
+        if inferred_birth is not None:
+            reason_suffix = f"; przyjęto maks. długość życia {MAX_REASONABLE_LIFESPAN_YEARS} lat"
+        return {
+            "status": "conflict",
+            "reason": f"kontekst przed narodzinami kandydata ({birth_year}){reason_suffix}",
+        }
+
+    if inferred_birth is not None:
+        return {
+            "status": "compatible",
+            "reason": (
+                f"lata kontekstu mieszczą się w możliwym okresie życia; "
+                f"oszacowano narodziny <= {birth_year} z daty śmierci i limitu {MAX_REASONABLE_LIFESPAN_YEARS} lat"
+            ),
+        }
+    if inferred_death is not None:
+        return {
+            "status": "compatible",
+            "reason": (
+                f"lata kontekstu mieszczą się w możliwym okresie życia; "
+                f"oszacowano śmierć >= {death_year} z daty urodzenia i limitu {MAX_REASONABLE_LIFESPAN_YEARS} lat"
+            ),
+        }
+
+    return {"status": "compatible", "reason": "lata kontekstu mieszczą się w możliwym okresie życia"}
+
+
+def format_candidate_life_span(candidate):
+    parts = []
+    if candidate.get("birth_year") is not None:
+        parts.append(f"ur. {candidate['birth_year']}")
+    if candidate.get("death_year") is not None:
+        parts.append(f"zm. {candidate['death_year']}")
+    if not parts:
+        return "brak danych"
+    return ", ".join(parts)
+
+
+def format_candidate_temporal_log_line(candidate, entity_analysis):
+    temporal = assess_candidate_temporal_fit(candidate, entity_analysis)
+    return (
+        f"{candidate.get('name', '?')} "
+        f"[{candidate.get('source', '?')}:{candidate.get('id', '?')}] "
+        f"life={format_candidate_life_span(candidate)} "
+        f"temporal={temporal['status']} "
+        f"reason={temporal['reason']} "
+        f"queries={candidate.get('matched_queries', [])}"
+    )
+
+
+def diagnostic_log_temporal_candidates(entity_analysis, tag_type, candidates, scope_label):
+    context_years = entity_analysis.get("context_years", [])
+    if not candidates:
+        diagnostic_log(
+            f"Chronologia kandydatów dla '{entity_analysis['surface']}' ({tag_type}, {scope_label}): brak kandydatów"
+        )
+        return
+
+    diagnostic_log(
+        f"Chronologia kandydatów dla '{entity_analysis['surface']}' ({tag_type}, {scope_label}), "
+        f"context_years={context_years}: " +
+        "; ".join(
+            format_candidate_temporal_log_line(candidate, entity_analysis)
+            for candidate in candidates[:12]
+        )
+    )
+
+
+def candidate_temporal_rank(candidate, entity_analysis):
+    assessment = assess_candidate_temporal_fit(candidate, entity_analysis)
+    if assessment["status"] == "compatible":
+        return 2
+    if assessment["status"] == "unknown":
+        return 1
+    return 0
+
+
+def candidate_query_specificity(candidate, entity_analysis):
+    score = 0
+    office_terms = [normalize_for_lookup(term) for term in entity_analysis.get("office_terms", [])]
+    place_terms = [normalize_for_lookup(term) for term in entity_analysis.get("place_terms", [])]
+
+    for query in candidate.get("matched_queries", []):
+        query_norm = normalize_for_lookup(query)
+        if not query_norm:
+            continue
+        token_count = len(tokenize_for_match(query))
+        if token_count >= 2:
+            score += 3
+        if token_count >= 3:
+            score += 2
+        if any(term and term in query_norm for term in office_terms):
+            score += 4
+        if any(term and term in query_norm for term in place_terms):
+            score += 2
+    return score
+
+
+def order_candidates_for_review(candidates, entity_analysis):
+    source_priority = {"WikiHum": 0, "va.wiki.kul.pl": 1, "Wikidata": 2}
+    return sorted(
+        candidates,
+        key=lambda candidate: (
+            source_priority.get(candidate.get("source"), 9),
+            -candidate_name_quality(candidate, entity_analysis),
+            -candidate_temporal_rank(candidate, entity_analysis),
+            -candidate_query_specificity(candidate, entity_analysis),
+            -len(candidate.get("matched_queries", [])),
+            candidate.get("name", ""),
+        )
+    )
+
+
+def search_source_candidates(query, tag_type, source_config):
+    candidates = search_wikibase_special(query, source_config)
+    filtered = filter_candidates_by_tag(candidates, tag_type, source_config)
+    for candidate in filtered:
+        if query not in candidate["matched_queries"]:
+            candidate["matched_queries"].append(query)
+    return filtered
+
+
+def collect_candidates_from_sources(entity_analysis, tag_type, source_names):
+    queries = build_query_plan(entity_analysis)
+    collected_candidates = []
+    for source_name in source_names:
+        source_config = WIKIBASE_SOURCES[source_name]
+        for query in queries:
+            try:
+                collected_candidates.extend(search_source_candidates(query, tag_type, source_config))
+            except Exception as exc:
+                print(f"Błąd wyszukiwania {source_name} dla '{query}': {exc}")
+    return order_candidates_for_review(dedupe_candidates(collected_candidates), entity_analysis)
+
+
+def collect_candidates(entity_analysis, context, tag_type):
+    """Zbiera kandydatów lokalnych; Wikidata jest dokładana później, jeśli lokalna identyfikacja zawiedzie."""
+    del context
+    queries = build_query_plan(entity_analysis)
+    diagnostic_log(
+        f"Plan zapytań dla '{entity_analysis['surface']}' ({tag_type}): {queries}"
+    )
+
+    local_candidates = collect_candidates_from_sources(
+        entity_analysis,
+        tag_type,
+        ("WikiHum", "va.wiki.kul.pl"),
+    )
+    if local_candidates:
+        diagnostic_log(
+            f"Kandydaci lokalni dla '{entity_analysis['surface']}' ({tag_type}): "
+            f"{[f'{candidate['source']}:{candidate['id']}' for candidate in local_candidates]}"
+        )
+        diagnostic_log_temporal_candidates(entity_analysis, tag_type, local_candidates, "lokalne")
+        return local_candidates[:12]
+
+    diagnostic_log(
+        f"Brak kandydatów lokalnych dla '{entity_analysis['surface']}' ({tag_type}); "
+        f"fallback do Wikidata."
+    )
+
+    wikidata_candidates = collect_candidates_from_sources(
+        entity_analysis,
+        tag_type,
+        ("Wikidata",),
+    )
+    diagnostic_log(
+        f"Kandydaci Wikidata dla '{entity_analysis['surface']}' ({tag_type}): "
+        f"{[f'{candidate['source']}:{candidate['id']}' for candidate in wikidata_candidates]}"
+    )
+    diagnostic_log_temporal_candidates(entity_analysis, tag_type, wikidata_candidates, "wikidata")
+    return wikidata_candidates[:12]
+
+
+def collect_wikidata_only_candidates(entity_analysis, tag_type):
+    """Zbiera kandydatów wyłącznie z Wikidaty do drugiej, niezależnej próby identyfikacji."""
+    wikidata_candidates = collect_candidates_from_sources(
+        entity_analysis,
+        tag_type,
+        ("Wikidata",),
+    )
+    diagnostic_log(
+        f"Dodatkowi kandydaci Wikidata dla '{entity_analysis['surface']}' ({tag_type}): "
+        f"{[f'{candidate['source']}:{candidate['id']}' for candidate in wikidata_candidates]}"
+    )
+    diagnostic_log_temporal_candidates(entity_analysis, tag_type, wikidata_candidates, "wikidata_retry")
+    return wikidata_candidates[:12]
+
+
+# --------------------------- GEMINI IDENTIFICATION ----------------------------
+def analyze_form_with_gemini(name, context, tag_type, document_years=None):
+    """Zwraca prostą analizę formy: lemat i wskazówki z kontekstu do identyfikacji."""
+    typ_encji = "postać historyczna" if tag_type == "persName" else "miejsce / kraj / region"
+
+    prompt = f"""
+Jesteś historykiem i filologiem klasycznym. Analizujesz dokument historyczny z lat 1300-1600, zwykle po łacinie, polsku, niemiecku.
+W tekście występuje encja typu {typ_encji} zapisana jako: "{name}".
+Kontekst: "{context}"
+
+Twoim zadaniem NIE jest końcowa identyfikacja encji. Masz przygotować prostą analizę do wyszukiwania w bazach referencyjnych.
+
+ZASADY:
+1. Możesz znormalizować nazwę do mianownika, ale tylko ostrożnie.
+2. Nie zgaduj pełnej tożsamości encyklopedycznej.
+3. Wypisz tylko te wskazówki kontekstowe, które naprawdę wynikają z tekstu.
+4. Dla osób wydziel funkcje, urzędy, relacje, daty i miejsca związane z osobą.
+5. Dla miejsc wydziel relacje przestrzenne, jednostki nadrzędne, regiony, kraje itp.
+6. Jeśli forma jest łacińska lub staroniemiecka i istnieje standardowy polski odpowiednik używany w historiografii, dodaj go do lemma_candidates.
+7. Dotyczy to zwłaszcza często spotykanych form, np. Fridericus -> Fryderyk, Wenceslaus -> Wacław, Cracovia -> Kraków, Prussia -> Prusy, Polonia -> Polska.
+8. Zwróć wyłącznie JSON.
+
+Zwróć dokładnie pola:
+- "normalized_best": ostrożna forma podstawowa do wyszukiwania
+- "confidence_form": "high", "medium" lub "low"
+- "lemma_candidates": 1-3 ostrożne warianty bazowe
+- "surface_variants": 1-4 warianty pisowni
+- "office_terms": lista funkcji lub urzędów, jeśli występują
+- "place_terms": lista określeń miejscowych lub relacyjnych, jeśli występują
+- "context_clues": krótka lista faktów z kontekstu użytecznych przy identyfikacji
+
+Przykład dla osoby:
+{{
+  "normalized_best": "Fridericus",
+  "confidence_form": "medium",
+  "lemma_candidates": ["Fridericus", "Fryderyk"],
+  "surface_variants": ["Fridericus", "Fryderyk"],
+  "office_terms": ["cardinalis"],
+  "place_terms": [],
+  "context_clues": ["posiada godność kardynała"]
+}}
+
+Przykład dla miejsca:
+{{
+  "normalized_best": "Cracovia",
+  "confidence_form": "medium",
+  "lemma_candidates": ["Cracovia", "Kraków"],
+  "surface_variants": ["Cracoviam", "Cracovia", "Kraków"],
+  "office_terms": [],
+  "place_terms": [],
+  "context_clues": ["miasto stołeczne Królestwa Polskiego"]
+}}
+    """
 
     try:
-        params = {
-            "action": "wbgetentities",
-            "ids": "|".join(ids),
-            "languages": "pl|la|en",
-            "format": "json",
-            "props": "labels|descriptions|aliases|claims"
-        }
-        headers = {
-            'User-Agent': 'EdycjaCyfrowa (PHC IHPAN) - skrypt badawczy'
-        }
-        response = get_json_response(api_url, params, headers, source_label)
-        entities = response.get('entities', {})
+        http_options = types.HttpOptions(timeout=TIMEOUT_MS)
+        config = types.GenerateContentConfig(
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+            http_options=http_options,
+        )
+        response = client.models.generate_content(
+            model=MODEL,
+            contents=prompt,
+            config=config,
+        )
 
-        candidates = []
-        for entity_id in ids:
-            entity = entities.get(entity_id, {})
-            labels = entity.get('labels', {})
-            descriptions = entity.get('descriptions', {})
-            aliases = entity.get('aliases', {})
+        analysis = parse_json_object(response.text)
+        normalized = normalize_form_analysis(name, tag_type, analysis)
+        normalized = validate_form_analysis(name, tag_type, normalized)
+        local_context_years = extract_years_from_text(context)
+        merged_context_years = sorted(set(local_context_years + list(document_years or [])))
+        normalized["context_years"] = merged_context_years
+        diagnostic_log(
+            f"Analiza encji '{name}' ({tag_type}): normalized_best='{normalized['normalized_best']}', "
+            f"confidence={normalized['confidence_form']}, lemma_candidates={normalized['lemma_candidates']}, "
+            f"surface_variants={normalized['surface_variants']}, office_terms={normalized['office_terms']}, "
+            f"place_terms={normalized['place_terms']}, context_clues={normalized['context_clues']}, "
+            f"context_years={normalized['context_years']}"
+        )
+        return normalized
+    except Exception as exc:
+        print(f"Błąd analizy Gemini dla {name}: {exc}")
+        fallback = normalize_form_analysis(name, tag_type, None)
+        local_context_years = extract_years_from_text(context)
+        merged_context_years = sorted(set(local_context_years + list(document_years or [])))
+        fallback["context_years"] = merged_context_years
+        diagnostic_log(
+            f"Fallback analizy encji '{name}' ({tag_type}): "
+            f"normalized_best='{fallback['normalized_best']}', confidence={fallback['confidence_form']}, "
+            f"context_years={fallback['context_years']}"
+        )
+        return fallback
 
-            label = (
-                labels.get('pl', {}).get('value')
-                or labels.get('la', {}).get('value')
-                or labels.get('en', {}).get('value')
-                or entity_id
+
+def analyze_name_with_gemini(name, context, tag_type, document_years=None):
+    return analyze_form_with_gemini(name, context, tag_type, document_years=document_years)
+
+
+def normalize_name_with_gemini(name, context, tag_type, document_years=None):
+    return analyze_name_with_gemini(name, context, tag_type, document_years=document_years)["normalized_best"]
+
+
+def format_candidate_for_prompt(candidate, entity_analysis=None):
+    labels = extract_multilang_values(candidate.get("labels", {}))
+    aliases = []
+    for lang in ("pl", "la"):
+        aliases.extend(candidate.get("aliases", {}).get(lang, []))
+    aliases = _normalize_string_list(aliases, min_length=2)[:12]
+    instance_of_texts = candidate.get("instance_of_texts", [])[:8]
+    claim_facts = candidate.get("claim_facts", [])[:10]
+    descriptions = extract_multilang_values(candidate.get("descriptions", {}))
+    wikipedia_lead = normalize_whitespace(candidate.get("wikipedia_lead", ""))
+    wikipedia_title = normalize_whitespace(candidate.get("wikipedia_title", ""))
+    matched_queries = candidate.get("matched_queries", [])
+    birth_year = candidate.get("birth_year")
+    death_year = candidate.get("death_year")
+    temporal_assessment = assess_candidate_temporal_fit(candidate, entity_analysis or {})
+    life_span_text = []
+    if birth_year is not None:
+        life_span_text.append(f"ur. {birth_year}")
+    if death_year is not None:
+        life_span_text.append(f"zm. {death_year}")
+    if not life_span_text:
+        life_span_text = ["brak danych"]
+
+    return (
+        f"Źródło: {candidate['source']}\n"
+        f"ID: {candidate['id']}\n"
+        f"URL: {candidate['url']}\n"
+        f"Nazwa główna: {candidate['name']}\n"
+        f"Etykiety: {labels or ['brak']}\n"
+        f"Opisy: {descriptions or ['brak']}\n"
+        f"Aliasy: {aliases or ['brak']}\n"
+        f"Instance of: {instance_of_texts or ['brak']}\n"
+        f"Lata życia: {life_span_text}\n"
+        f"Ocena chronologiczna: {temporal_assessment['status']} ({temporal_assessment['reason']})\n"
+        f"Fakty z właściwości: {claim_facts or ['brak']}\n"
+        f"Tytuł Wikipedia: {wikipedia_title or 'brak'}\n"
+        f"Wikipedia lead ({candidate.get('wikipedia_source', 'brak')}): {wikipedia_lead or 'brak'}\n"
+        f"Zapytania, które dały wynik: {matched_queries or ['brak']}\n"
+    )
+
+
+def choose_candidate_with_gemini(name, context, tag_type, entity_analysis, candidates):
+    if not candidates:
+        return None
+
+    candidate_blocks = []
+    for idx, candidate in enumerate(candidates[:12], start=1):
+        candidate_blocks.append(f"OPCJA {idx}\n{format_candidate_for_prompt(candidate, entity_analysis)}")
+    candidates_text = "\n\n".join(candidate_blocks)
+
+    prompt = f"""
+Zadanie: wybierz najlepszą encję referencyjną dla encji historycznej z tekstu albo zwróć NONE.
+
+Typ encji: {tag_type}
+Forma z tekstu: "{name}"
+Forma znormalizowana do wyszukiwania: "{entity_analysis.get('normalized_best', name)}"
+Kontekst zdania/akapitu: "{context}"
+Wskazówki z kontekstu: {entity_analysis.get('context_clues', [])}
+Funkcje/urzędy: {entity_analysis.get('office_terms', [])}
+Wskazówki miejscowe: {entity_analysis.get('place_terms', [])}
+Lata wykryte w kontekście: {entity_analysis.get('context_years', [])}
+
+ZASADY:
+1. Nie zgaduj na siłę.
+2. Dla persName wybieraj wyłącznie człowieka, zgodnego z kontekstem.
+3. Dla placeName wybieraj wyłącznie miejsce, kraj, region lub jednostkę administracyjną zgodną z kontekstem.
+4. Dla persName uwzględnij zgodność chronologiczną: kandydat żyjący wyraźnie przed lub po latach z kontekstu powinien być odrzucany.
+5. Uwzględnij formę łacińską, mianownik, opisy, etykiety, aliasy, instance of i fakty z właściwości.
+6. Jeśli żaden kandydat nie pasuje wystarczająco dobrze, zwróć dokładnie NONE.
+7. Jeśli jedna opcja pasuje wyraźnie najlepiej, zwróć wyłącznie jej pełny URL.
+
+Kandydaci:
+{candidates_text}
+
+Zwróć tylko pełny URL wybranego kandydata albo dokładnie NONE.
+    """
+
+    try:
+        http_options = types.HttpOptions(timeout=TIMEOUT_MS)
+        config = types.GenerateContentConfig(
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+            http_options=http_options,
+        )
+        response = client.models.generate_content(
+            model=MODEL,
+            contents=prompt,
+            config=config,
+        )
+        result = normalize_whitespace(response.text)
+        if result.upper() == "NONE":
+            diagnostic_log(
+                f"Gemini nie wybrało kandydata dla '{name}' ({tag_type})."
             )
-            desc = (
-                descriptions.get('pl', {}).get('value')
-                or descriptions.get('la', {}).get('value')
-                or descriptions.get('en', {}).get('value')
-                or 'Brak opisu'
+            return None
+        url_match = re.search(r"https?://\S+", result)
+        if url_match:
+            selected_url = url_match.group(0).rstrip(".,);")
+            diagnostic_log(
+                f"Gemini wybrało dla '{name}' ({tag_type}): {selected_url}"
+            )
+            return selected_url
+        diagnostic_log(
+            f"Gemini zwróciło nieoczekiwany wynik dla '{name}' ({tag_type}): {result}"
+        )
+        return None
+    except Exception as exc:
+        print(f"Błąd Gemini przy identyfikacji {name}: {exc}")
+        return None
+
+
+def ask_gemini_to_disambiguate(name, name_n, context, candidates, entity_analysis=None):
+    del name_n
+    tag_type = "persName"
+    if entity_analysis and entity_analysis.get("entity_type") == "place":
+        tag_type = "placeName"
+    return choose_candidate_with_gemini(name, context, tag_type, entity_analysis or {}, candidates)
+
+
+def build_link_decision(name, context, tag_type, entity_analysis, candidates):
+    if not candidates:
+        diagnostic_log(
+            f"Brak kandydatów do identyfikacji dla '{name}' ({tag_type})."
+        )
+        return {
+            "status": "none",
+            "selected_url": None,
+            "reason": "no_candidates",
+        }
+
+    if should_enrich_candidates_with_wikipedia(tag_type, candidates):
+        diagnostic_log(
+            f"Wzbogacam kandydatów Wikipedią dla '{name}' ({tag_type}) przed decyzją Gemini."
+        )
+        try:
+            candidates = enrich_wikidata_candidates_with_plwiki_leads(candidates)
+        except Exception as exc:
+            diagnostic_log(
+                f"Błąd wzbogacania kandydatów Wikipedią dla '{name}' ({tag_type}): {exc}"
             )
 
-            label_values = []
-            for lang in ('pl', 'la', 'en'):
-                value = labels.get(lang, {}).get('value')
-                if value:
-                    label_values.append(value)
-
-            alias_values = []
-            for lang in ('pl', 'la', 'en'):
-                alias_values.extend(alias.get('value') for alias in aliases.get(lang, []))
-            label_variants = ", ".join(dict.fromkeys(label_values)) if label_values else "Brak etykiet alternatywnych"
-            aliases_str = ", ".join(dict.fromkeys(alias_values)) if alias_values else "Brak aliasów"
-            claim_texts = extract_text_claims(entity)
-
-            candidates.append({
-                "id": entity_id,
-                "name": label,
-                "desc": f"{source_label}: {desc} | Etykiety: {label_variants} | Aliasy: {aliases_str}",
-                "url": f"{entity_base_url}/{entity_id}",
-                "source": source_label,
-                "claim_texts": claim_texts
-            })
-        return candidates
-    except Exception as e:
-        print(f"Błąd pobierania encji {source_label} dla {ids}: {e}")
-        return []
-
-
-def search_wikibase_fulltext(query, api_url, source_label, entity_base_url, tag_type=None):
-    """Fallback oparty o silnik Special:Search/CirrusSearch dla instancji Wikibase."""
-    headers = {
-        'User-Agent': 'EdycjaCyfrowa (PHC IHPAN) - skrypt badawczy'
+    selected_url = choose_candidate_with_gemini(
+        name,
+        context,
+        tag_type,
+        entity_analysis,
+        candidates,
+    )
+    if selected_url:
+        selected_candidate = next(
+            (candidate for candidate in candidates if candidate.get("url") == selected_url),
+            None
+        )
+        if selected_candidate is not None:
+            diagnostic_log(
+                f"Wybrany kandydat dla '{name}' ({tag_type}): "
+                f"{format_candidate_temporal_log_line(selected_candidate, entity_analysis)}"
+            )
+        return {
+            "status": "selected",
+            "selected_url": selected_url,
+            "reason": "gemini_selected",
+        }
+    return {
+        "status": "none",
+        "selected_url": None,
+        "reason": "gemini_none",
     }
 
-    try:
-        for variant in build_wikibase_fallback_queries(query):
-            params = {
-                "action": "query",
-                "list": "search",
-                "srsearch": f"{variant}~2",
-                "srnamespace": 120,
-                "srlimit": 5,
-                "format": "json"
-            }
-            response = get_json_response(api_url, params, headers, source_label)
-            hits = response.get('query', {}).get('search', [])
 
-            entity_ids = []
-            for item in hits:
-                title = item.get('title', '')
-                match = re.fullmatch(r'Item:(Q\d+)', title)
-                if match:
-                    entity_ids.append(match.group(1))
+def link_entity(name, context, tag_type, document_years=None):
+    """Centralny, prosty pipeline linkowania jednej encji dla aplikacji webowej."""
+    entity_analysis = analyze_name_with_gemini(name, context, tag_type, document_years=document_years)
+    normalized_name = entity_analysis["normalized_best"]
+    queries = build_query_plan(entity_analysis)
+    candidates = collect_candidates(entity_analysis, context, tag_type)
+    decision = build_link_decision(name, context, tag_type, entity_analysis, candidates)
 
-            entity_ids = list(dict.fromkeys(entity_ids))
-            if entity_ids:
-                candidates = enrich_wikibase_entities(entity_ids, api_url, source_label, entity_base_url)
-                if tag_type:
-                    candidates = [
-                        candidate for candidate in candidates
-                        if is_likely_entity_match(candidate['name'], candidate['desc'], tag_type)
-                    ]
-                if candidates:
-                    return candidates
-        return []
-    except Exception as e:
-        print(f"Błąd pełnotekstowego wyszukiwania {source_label} dla {query}: {e}")
-        return []
+    used_wikidata = any(candidate.get("source") == "Wikidata" for candidate in candidates)
+    has_local_candidates = any(candidate.get("source") in {"WikiHum", "va.wiki.kul.pl"} for candidate in candidates)
+    should_retry_with_wikidata = (
+        decision.get("status") != "selected"
+        and has_local_candidates
+        and not used_wikidata
+    )
 
+    if should_retry_with_wikidata:
+        diagnostic_log(
+            f"Lokalni kandydaci dla '{name}' ({tag_type}) nie zostali wybrani; "
+            f"ponawiam identyfikację tylko na kandydatach z Wikidaty."
+        )
+        candidates = collect_wikidata_only_candidates(entity_analysis, tag_type)
+        decision = build_link_decision(name, context, tag_type, entity_analysis, candidates)
 
-def search_wikibase_entities(query, api_url, source_label, entity_base_url=None, tag_type=None):
-    """Pobiera kandydatów z instancji Wikibase, a przy braku trafień próbuje uproszczonych wariantów zapytania."""
-    headers = {
-        'User-Agent': 'EdycjaCyfrowa (PHC IHPAN) - skrypt badawczy'
+    if ENABLE_WIKIDATA_SEMANTIC_FALLBACK:
+        should_use_semantic_fallback, semantic_fallback_reason = should_use_wikidata_semantic_fallback(
+            entity_analysis,
+            tag_type,
+            decision,
+            candidates,
+        )
+        if should_use_semantic_fallback:
+            diagnostic_log(
+                f"Uruchamiam fallback semantyczny Wikidata dla '{name}' ({tag_type}); "
+                f"powód={semantic_fallback_reason}."
+            )
+            semantic_candidates = collect_wikidata_semantic_fallback_candidates(entity_analysis)
+            if semantic_candidates:
+                candidates = semantic_candidates
+                decision = build_link_decision(name, context, tag_type, entity_analysis, candidates)
+            else:
+                diagnostic_log(
+                    f"Fallback semantyczny Wikidata nie zwrócił kandydatów dla '{name}' ({tag_type})."
+                )
+        elif decision.get("status") != "selected":
+            diagnostic_log(
+                f"Fallback semantyczny Wikidata pominięty dla '{name}' ({tag_type}); "
+                f"powód={semantic_fallback_reason}."
+            )
+    elif decision.get("status") != "selected":
+        diagnostic_log(
+            f"Fallback semantyczny Wikidata jest wyłączony dla '{name}' ({tag_type})."
+        )
+
+    should_use_plwiki_fallback, plwiki_fallback_reason = should_use_plwiki_person_fallback(
+        entity_analysis,
+        tag_type,
+        decision,
+    )
+    if should_use_plwiki_fallback:
+        diagnostic_log(
+            f"Uruchamiam fallback plwiki dla '{name}' ({tag_type}); "
+            f"powód={plwiki_fallback_reason}."
+        )
+        plwiki_candidates = collect_plwiki_person_fallback_candidates(entity_analysis)
+        if plwiki_candidates:
+            candidates = plwiki_candidates
+            decision = build_link_decision(name, context, tag_type, entity_analysis, candidates)
+        else:
+            diagnostic_log(
+                f"Fallback plwiki nie zwrócił kandydatów dla '{name}' ({tag_type})."
+            )
+    elif decision.get("status") != "selected":
+        diagnostic_log(
+            f"Fallback plwiki pominięty dla '{name}' ({tag_type}); "
+            f"powód={plwiki_fallback_reason}."
+        )
+
+    return {
+        "entity_analysis": entity_analysis,
+        "normalized_name": normalized_name,
+        "query_plan": queries,
+        "candidates": candidates,
+        "decision": decision,
     }
 
-    candidates = []
-    found_ids = []
-    seen_ids = set()
 
-    try:
-        for variant in build_wikibase_fallback_queries(query):
-            for language in ("pl", "la", "en"):
-                params = {
-                    "action": "wbsearchentities",
-                    "search": variant,
-                    "language": language,
-                    "format": "json",
-                    "limit": 5
-                }
-                response = get_json_response(api_url, params, headers, source_label)
-                for item in response.get('search', []):
-                    item_id = item['id']
-                    if item_id in seen_ids:
-                        continue
-                    seen_ids.add(item_id)
-                    found_ids.append(item_id)
-
-            if found_ids:
-                candidates = enrich_wikibase_entities(found_ids, api_url, source_label, entity_base_url)
-                break
-
-        if tag_type:
-            candidates = [
-                candidate for candidate in candidates
-                if is_likely_entity_match(candidate['name'], candidate['desc'], tag_type)
-            ]
-
-        if not candidates and source_label in {"WikiHum", "va.wiki.kul.pl"} and entity_base_url:
-            candidates = search_wikibase_fulltext(query, api_url, source_label, entity_base_url, tag_type=tag_type)
-
-        return candidates
-    except Exception as e:
-        print(f"Błąd {source_label} dla {query}: {e}")
-        return []
-
-
-def save_clean_xml(soup, output_file):
-    xml_content = soup.prettify(formatter="minimal")
-
-    tags_to_fix = ['persName', 'placeName']
-    for tag in tags_to_fix:
-        pattern = rf'<{tag}[^>]*>\s*(.*?)\s*</{tag}>'
-        xml_content = re.sub(pattern, lambda m: re.sub(r'\s+', ' ', m.group(0)).replace('> ', '>').replace(' <', '<'), xml_content, flags=re.DOTALL)
-
-        xml_content = re.sub(rf'<{tag}(.*?)>\s+', rf'<{tag}\1>', xml_content)
-        xml_content = re.sub(rf'\s+</{tag}>', f'</{tag}>', xml_content)
-
-    with open(output_file, 'w', encoding='utf-8') as f:
-        f.write(xml_content)
-
-
+# ---------------------------------- NER --------------------------------------
 def tag_entities_with_gemini(raw_text):
     """
     Wykorzystuje Gemini do rozpoznania osób i miejsc w surowym tekście
@@ -557,15 +2515,17 @@ def tag_entities_with_gemini(raw_text):
     """
     prompt = f"""
 Jesteś ekspertem od cyfrowej edycji tekstów historycznych, standardu TEI-XML i paleografem.
-Twoim zadaniem jest rozpoznanie nazw osób (postaci historycznych) oraz nazw geograficznych (miejscowości, krain, rzek) w poniższym tekście łacińskiego dokumentu historycznego.
+Twoim zadaniem jest rozpoznanie nazw osób (postaci historycznych) oraz nazw geograficznych (miejscowości, krain, regionów) w poniższym tekście łacińskiego (lub polskego, niemieckiego) dokumentu historycznego oraz ich otagowanie.
 
 ZASADY TAGOWANIA:
-1. Użyj znacznika <persName> dla osób. Zwróć szczególną uwagę na średniowieczne zapisy nazw gdzie czasem nie występują nazwiska 
+1. Użyj znacznika <persName> dla osób. Zwróć szczególną uwagę na średniowieczne zapisy nazw gdzie czasem nie występują nazwiska
    lecz zapis: Jan ze Żnina, Otto von Stamburg itp. - to są pełne nazwy osób, nie należy tagować osobno miejscowości lecz
-   całość jako osobę: <persName>Jan ze Żnina</persName> 
+   całość jako osobę: <persName>Jan ze Żnina</persName>. Niekiedy będą to być też same imiona osób np. 'Bartolomeo' albo same nazwiska np. 'Potocki'.
 2. Użyj znacznika <placeName> dla miejsc.
 2a. Jeśli nazwa miejscowa występuje tylko jako przymiotnik lub element tytułu/urzędu osoby, nie taguj jej osobno jako <placeName>.
     Przykład: "episcopus Poznaniensis" to opis urzędu osoby, a nie samodzielne wskazanie miejsca do otagowania.
+2b. Jeśli nazwa miejscowa występuje w nagłówku np. listu, lub w podpisie, np. "Praga, 1 iulii 1393" albo "Datum Mediolani",
+    to również musi zostać otagowana jako <placeName>.
 3. NIE zmieniaj ani jednego znaku w oryginalnym tekście (zachowaj pisownię, interpunkcję, wielkość liter).
 4. Całość umieść wewnątrz tagu <div type="document">.
 5. Uwzględnij podział tekstu na akapity, używając znacznika <p>.
@@ -582,512 +2542,20 @@ Zwróć TYLKO wynikowy kod XML. Nie dodawaj komentarzy ani wyjaśnień.
         http_options = types.HttpOptions(timeout=TIMEOUT_MS)
         config = types.GenerateContentConfig(
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-            http_options=http_options
+            http_options=http_options,
         )
 
         response = client.models.generate_content(
             model=MODEL,
             contents=prompt,
-            config=config
+            config=config,
         )
 
-        # Oczyszczanie odpowiedzi z ewentualnych bloków markdown ```xml ... ```
         tagged_text = response.text.strip()
-        tagged_text = re.sub(r'^```xml|```$', '', tagged_text).strip()
-
-        # jeżeli brak tagu <div>
-        if not tagged_text.startswith('<div'):
+        tagged_text = re.sub(r"^```xml|```$", "", tagged_text).strip()
+        if not tagged_text.startswith("<div"):
             tagged_text = f'<div type="document">{tagged_text}</div>'
-
         return tagged_text
-    except Exception as e:
-        print(f"Błąd tagowania Gemini: {e}")
+    except Exception as exc:
+        print(f"Błąd tagowania Gemini: {exc}")
         return None
-
-def create_initial_tei(input_txt_file, output_xml_file):
-    """Wczytuje tekst, taguje go przez Gemini i tworzy szkielet pliku TEI-XML."""
-    with open(input_txt_file, 'r', encoding='utf-8') as f:
-        content = f.read()
-
-    print("Rozpoczynam automatyczne tagowanie tekstu (NER)...")
-    tagged_content = tag_entities_with_gemini(content)
-
-    if not tagged_content:
-        print("Nie udało się otagować tekstu.")
-        return False
-
-    # Tworzenie minimalistycznego szkieletu TEI
-    tei_template = f"""<?xml version="1.0" encoding="UTF-8"?>
-<TEI xmlns="http://www.tei-c.org/ns/1.0">
-  <teiHeader>
-      <fileDesc>
-         <titleStmt><title>Dokument z automatyczną identyfikacją encji</title></titleStmt>
-         <publicationStmt><p>PHC IHPAN</p></publicationStmt>
-         <sourceDesc><p>Dokument źródłowy</p></sourceDesc>
-      </fileDesc>
-  </teiHeader>
-  <text>
-      <body>
-          <div>
-            {tagged_content}
-          </div>
-      </body>
-  </text>
-</TEI>
-"""
-    with open(output_xml_file, 'w', encoding='utf-8') as f:
-        f.write(tei_template)
-
-    print(f"Wstępny plik XML przygotowany: {output_xml_file}")
-    return True
-
-def search_wikidata(query, tag_type=None):
-    """pobieranie kandydatów z Wikidata Search API."""
-    return search_wikibase_entities(
-        query,
-        api_url="https://www.wikidata.org/w/api.php",
-        source_label="Wikidata",
-        entity_base_url="https://www.wikidata.org/entity",
-        tag_type=tag_type
-    )
-
-
-def search_wikihum(query, tag_type=None):
-    """pobieranie kandydatów z WikiHum (instancja Wikibase)."""
-    return search_wikibase_entities(
-        query,
-        api_url="https://wikihum.lab.dariah.pl/api.php",
-        source_label="WikiHum",
-        entity_base_url="https://wikihum.lab.dariah.pl/entity",
-        tag_type=tag_type
-    )
-
-
-def search_va_wiki_kul(query, tag_type=None):
-    """pobieranie kandydatów z va.wiki.kul.pl (instancja Wikibase)."""
-    return search_wikibase_entities(
-        query,
-        api_url="https://va.wiki.kul.pl/w/api.php",
-        source_label="va.wiki.kul.pl",
-        entity_base_url="https://va.wiki.kul.pl/entity",
-        tag_type=tag_type
-    )
-
-
-def search_geonames(query):
-    """pobieranie kandydatów z GeoNames Search API."""
-    url = "http://api.geonames.org/searchJSON"
-    params = {
-        "q": query,
-        "maxRows": 5,
-        "username": GEONAMES_USERNAME,
-        "style": "SHORT" # zwraca najważniejsze dane (kraj, nazwa)
-    }
-    try:
-        headers = {
-            'User-Agent': 'EdycjaCyfrowa (PHC IHPAN) - skrypt badawczy'
-        }
-        response = get_json_response(url, params, headers, "GeoNames")
-        candidates = []
-        for item in response.get('geonames', []):
-            country = item.get('countryCode', 'Nieznany kraj')
-            fcodeName = item.get('fcodeName', '')
-            candidates.append({
-                "id": str(item['geonameId']),
-                "name": item['name'],
-                "desc": f"GeoNames: {fcodeName} w kraju {country}",
-                "url": f"https://www.geonames.org/{item['geonameId']}",
-                "source": "GeoNames"
-            })
-        return candidates
-    except Exception as e:
-        print(f"Błąd GeoNames dla {query}: {e}")
-        return []
-    
-
-def analyze_name_with_gemini(name, context, tag_type):
-    """Zwraca ostrożną analizę encji: nazwę bazową, warianty i wskazówki z kontekstu."""
-    typ_encji = "miejscowość / region" if tag_type == "placeName" else "postać historyczna"
-
-    prompt = f"""
-Jesteś historykiem i filologiem klasycznym. Analizujesz dokument historyczny z przełomu XV i XVI wieku (Polska i kraje ościenne, łacina lub język niemiecki).
-W tekście występuje {typ_encji} zapisana jako: "{name}".
-Kontekst: "{context}"
-
-Twoim zadaniem NIE jest zgadywanie na siłę pełnej tożsamości. Masz przygotować OSTROŻNĄ nazwę do dalszego wyszukiwania w bazach referencyjnych.
-
-ZASADY:
-1. Jeśli pewność nie jest wysoka, preferuj nazwę krótszą i bardziej ogólną.
-2. Nie dopowiadaj przydomka, miejsca pochodzenia, rodu ani urzędu, jeśli nie wynikają jednoznacznie z kontekstu.
-3. Jeśli widzisz cechy pomocne w identyfikacji, wypisz je osobno jako krótkie wskazówki kontekstowe.
-4. Dla osób średniowiecznych forma bazowa może być mniej szczegółowa niż finalna identyfikacja.
-5. Jeśli nie jesteś pewien pełnej identyfikacji, lepiej zwrócić np. "Dobrogost" niż błędnie "Dobrogost z Kurozwęk".
-6. Zwróć tylko obiekt JSON bez komentarzy.
-
-Zwróć dokładnie pola:
-- "normalized_best": najlepsza ostrożna nazwa do wyszukiwania
-- "confidence": jedno z "high", "medium", "low"
-- "variants": lista 2-5 sensownych wariantów wyszukiwawczych, od ostrożnych do bardziej szczegółowych
-- "context_clues": lista krótkich wskazówek z kontekstu, np. funkcji, urzędów, miejsc, relacji
-
-Przykłady:
-{{
-  "normalized_best": "Toruń",
-  "confidence": "high",
-  "variants": ["Toruń", "Thorun", "Thorunii"],
-  "context_clues": ["miasto pruskie"]
-}}
-
-{{
-  "normalized_best": "Dobrogost",
-  "confidence": "medium",
-  "variants": ["Dobrogost", "Dobrogostius", "Dobrogost z Nowego Dworu"],
-  "context_clues": ["biskup poznański", "kolektor papieski"]
-}}
-
-{{
-  "normalized_best": "Lucca",
-  "confidence": "high",
-  "variants": ["Lucanus", "Lucca", "Luca"],
-  "context_clues": ["miasto toskańskie", "forma łacińska przymiotnikowa od nazwy miejsca"]
-}}
-    """
-    try:
-        http_options = types.HttpOptions(timeout=TIMEOUT_MS)
-        config = types.GenerateContentConfig(
-                    automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-                    http_options=http_options
-                )
-         
-        response = client.models.generate_content(
-            model=MODEL,
-            contents=prompt,
-            config=config
-        )
-
-        analysis = parse_json_object(response.text)
-        normalized = normalize_analysis_result(name, tag_type, analysis)
-        normalized = validate_entity_analysis(name, tag_type, normalized)
-        diagnostic_log(
-            f"Analiza encji '{name}' ({tag_type}): normalized_best='{normalized['normalized_best']}', "
-            f"confidence={normalized['confidence']}, variants={normalized['variants']}, "
-            f"context_clues={normalized['context_clues']}"
-        )
-        return normalized
-    except Exception as e:
-        print(f"Błąd analizy Gemini dla {name}: {e}")
-        normalized = normalize_analysis_result(name, tag_type, None)
-        normalized = validate_entity_analysis(name, tag_type, normalized)
-        diagnostic_log(
-            f"Fallback analizy encji '{name}' ({tag_type}) po błędzie: "
-            f"normalized_best='{normalized['normalized_best']}', confidence={normalized['confidence']}"
-        )
-        return normalized
-
-
-def normalize_name_with_gemini(name, context, tag_type):
-    """Kompatybilny wrapper zwracający najlepszą nazwę bazową."""
-    return analyze_name_with_gemini(name, context, tag_type)["normalized_best"]
-
-
-def build_search_queries(entity_analysis, context, tag_type):
-    """Buduje zestaw zapytań do baz referencyjnych na podstawie ostrożnej analizy i kontekstu."""
-    queries = []
-    seen = set()
-
-    def add_query(value):
-        value = normalize_whitespace(value)
-        if len(value) < 2:
-            return
-        folded = value.casefold()
-        if folded in seen:
-            return
-        seen.add(folded)
-        queries.append(value)
-
-    add_query(entity_analysis["surface"])
-    add_query(entity_analysis["normalized_best"])
-
-    for variant in entity_analysis.get("variants", []):
-        add_query(variant)
-
-    base_names = entity_analysis.get("variants", [])[:2] or [entity_analysis["normalized_best"]]
-    clues = entity_analysis.get("context_clues", [])[:3]
-
-    if entity_analysis.get("confidence") == "high":
-        for clue in clues[:2]:
-            add_query(f"{entity_analysis['normalized_best']} {clue}")
-    else:
-        for base_name in base_names[:2]:
-            add_query(base_name)
-            for clue in clues[:2]:
-                add_query(f"{base_name} {clue}")
-
-    # Wspierający fallback z samego kontekstu tylko dla osób.
-    context_tokens = tokenize_for_match(context)
-    if tag_type == "persName" and len(context_tokens) >= 2:
-        add_query(" ".join(context_tokens[:3]))
-
-    return queries[:8]
-
-
-def score_candidate(candidate, entity_analysis, context, tag_type):
-    """Nadaje kandydatom prosty wynik zgodności z nazwą i kontekstem."""
-    score = 0
-    haystack = f"{candidate.get('name', '')} {candidate.get('desc', '')}".casefold()
-    claim_haystack = " ".join(candidate.get("claim_texts", [])).casefold()
-
-    name_tokens = set(tokenize_for_match(entity_analysis["normalized_best"]))
-    surface_tokens = set(tokenize_for_match(entity_analysis["surface"]))
-    variant_tokens = set()
-    for variant in entity_analysis.get("variants", []):
-        variant_tokens.update(tokenize_for_match(variant))
-
-    clue_tokens = set()
-    for clue in entity_analysis.get("context_clues", []):
-        clue_tokens.update(tokenize_for_match(clue))
-
-    for token in surface_tokens:
-        if token in haystack:
-            score += 4
-        if token in claim_haystack:
-            score += 5
-    for token in name_tokens:
-        if token in haystack:
-            score += 5
-        if token in claim_haystack:
-            score += 7
-    for token in variant_tokens:
-        if token in haystack:
-            score += 2
-        if token in claim_haystack:
-            score += 3
-    for token in clue_tokens:
-        if token in haystack:
-            score += 3
-        if token in claim_haystack:
-            score += 5
-
-    if candidate.get("source") == "GeoNames" and tag_type == "placeName":
-        score += 4
-    if candidate.get("source") in {"WikiHum", "va.wiki.kul.pl"} and tag_type == "persName":
-        score += 2
-
-    if not is_likely_entity_match(candidate.get("name", ""), candidate.get("desc", ""), tag_type):
-        score -= 8
-
-    if entity_analysis.get("confidence") == "high":
-        score += 1
-    elif entity_analysis.get("confidence") == "low":
-        score -= 1
-
-    return score
-
-
-def collect_candidates(entity_analysis, context, tag_type):
-    """Wyszukuje kandydatów dla kilku wariantów nazwy i sortuje ich po prostym rankingu."""
-    queries = build_search_queries(entity_analysis, context, tag_type)
-    diagnostic_log(
-        f"Zapytania dla '{entity_analysis['surface']}' ({tag_type}): {queries}"
-    )
-    collected = {}
-
-    for query in queries:
-        if tag_type == 'placeName':
-            query_candidates = (
-                search_geonames(query) +
-                search_va_wiki_kul(query, tag_type=tag_type) +
-                search_wikidata(query, tag_type=tag_type)
-            )
-        else:
-            query_candidates = (
-                search_wikihum(query, tag_type=tag_type) +
-                search_va_wiki_kul(query, tag_type=tag_type) +
-                search_wikidata(query, tag_type=tag_type)
-            )
-
-        query_result_labels = [
-            f"{candidate.get('source', '?')}:{candidate.get('id')}"
-            for candidate in query_candidates
-        ]
-        diagnostic_log(
-            f"Wyniki dla zapytania '{query}' ({tag_type}): "
-            f"{query_result_labels}"
-        )
-
-        for candidate in query_candidates:
-            candidate_key = candidate.get("url") or f"{candidate.get('source')}:{candidate.get('id')}"
-            candidate_copy = dict(candidate)
-            candidate_copy.setdefault("matched_queries", [])
-            if candidate_key in collected:
-                existing = collected[candidate_key]
-                if query not in existing["matched_queries"]:
-                    existing["matched_queries"].append(query)
-                    existing["score"] += 2
-                existing["score"] += score_candidate(existing, entity_analysis, context, tag_type)
-            else:
-                candidate_copy["matched_queries"] = [query]
-                candidate_copy["score"] = score_candidate(candidate_copy, entity_analysis, context, tag_type)
-                collected[candidate_key] = candidate_copy
-
-    ranked = sorted(
-        collected.values(),
-        key=lambda candidate: (candidate.get("score", 0), candidate.get("name", "")),
-        reverse=True
-    )
-    diagnostic_log(
-        f"Ranking kandydatów dla '{entity_analysis['surface']}' ({tag_type}): " +
-        "; ".join(
-            f"{candidate['name']} [{candidate.get('source', '?')}:{candidate['id']}] "
-            f"score={candidate.get('score', 0)} queries={candidate.get('matched_queries', [])}"
-            for candidate in ranked[:8]
-        )
-    )
-    return ranked[:8]
-
-
-def ask_gemini_to_disambiguate(name, name_n, context, candidates, entity_analysis=None):
-    """ wysyłanie zapytanie do Gemini z prośbą o wybór właściwego ID z listy przedstawionych kandydatów """
-    if not candidates:
-        return None
-
-    if len(candidates) == 1:
-        selected_url = candidates[0].get("url")
-        diagnostic_log(
-            f"Disambiguation skrócone dla '{name}' ({name_n}) - jedyny kandydat: {selected_url}"
-        )
-        return selected_url
-
-    top_candidate = candidates[0]
-    second_score = candidates[1].get("score", -999) if len(candidates) > 1 else -999
-    if top_candidate.get("score", 0) >= 60 and top_candidate.get("score", 0) - second_score >= 25:
-        selected_url = top_candidate.get("url")
-        diagnostic_log(
-            f"Disambiguation skrócone dla '{name}' ({name_n}) - dominujący kandydat: "
-            f"{selected_url} score={top_candidate.get('score', 0)} vs next={second_score}"
-        )
-        return selected_url
-
-    candidates_text = ""
-    for idx, c in enumerate(candidates):
-        matched_queries = ", ".join(c.get("matched_queries", [])[:3]) or "brak"
-        score = c.get("score", 0)
-        candidates_text += f"- Opcja {idx+1}: ID: {c['id']} | Nazwa: {c['name']} | Opis: {c['desc']} | Score: {score} | Zapytania: {matched_queries} | URL: {c['url']}\n"
-
-    analysis_text = ""
-    if entity_analysis:
-        clues = ", ".join(entity_analysis.get("context_clues", [])) or "brak"
-        variants = ", ".join(entity_analysis.get("variants", [])[:5]) or entity_analysis.get("normalized_best", name_n)
-        analysis_text = f"""
-Ostrożna analiza nazwy:
-- nazwa bazowa: "{entity_analysis.get('normalized_best', name_n)}"
-- pewność: "{entity_analysis.get('confidence', 'low')}"
-- warianty wyszukiwawcze: {variants}
-- wskazówki z kontekstu: {clues}
-"""
-
-    prompt = f"""
-Zadaniem jest tzw. Entity Linking (rozpoznawanie jednostek) w historycznym tekście (Polska i kraje ościenne, ok. 1501 roku).
-Znaleziono encję o nazwie: "{name} ({name_n})".
-Kontekst zdania, w którym występuje: "{context}".
-
-{analysis_text}
-
-Oto lista kandydatów pobranych z baz danych (Wikidata, WikiHum, GeoNames):
-{candidates_text}
-
-Przeanalizuj kontekst historyczny i gramatyczny (nazwa może być odmieniona po łacinie).
-Preferuj kandydatów zgodnych z funkcjami, urzędami i relacjami z kontekstu. Odrzucaj dokumenty, jeśli encja ma być osobą lub miejscem.
-Jeśli pierwszy kandydat ma wyraźnie najwyższy wynik punktowy i dobrze odpowiada nazwie oraz kontekstowi, wybierz go zamiast odpowiadać NONE.
-Która opcja jest poprawna? 
-Zwróć TYLKO I WYŁĄCZNIE pełny URL wybranego kandydata (np. https://www.wikidata.org/wiki/Q454521). 
-Jeśli żaden kandydat nie pasuje do kontekstu, zwróć dokładnie słowo: NONE.
-    """
-    
-    try:
-        http_options = types.HttpOptions(timeout=TIMEOUT_MS)
-        config = types.GenerateContentConfig(
-                    automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-                    http_options=http_options
-                )
-         
-        response = client.models.generate_content(
-            model=MODEL,
-            contents=prompt,
-            config=config
-        )
-
-        result = response.text.strip()
-        if "NONE" in result.upper():
-            diagnostic_log(
-                f"Disambiguation dla '{name}' ({name_n}) zwróciło NONE. "
-                f"Top kandydaci: {[candidate.get('url') for candidate in candidates[:5]]}"
-            )
-            return None
-        diagnostic_log(
-            f"Disambiguation dla '{name}' ({name_n}) wybrało: {result}"
-        )
-        return result
-    except Exception as e:
-        print(f"Błąd Gemini przy ewaluacji: {e}")
-        return None
-
-
-def process_tei_xml(input_file, output_file):
-    """ procedura przetwarzania pliku tei xml """
-    with open(input_file, 'r', encoding='utf-8') as f:
-        soup = BeautifulSoup(f, 'xml')
-
-    tags_to_process = soup.find_all(['persName', 'placeName'])
-    
-    for tag in tags_to_process:
-        if tag.has_attr('ref'):
-            continue
-            
-        name = tag.get_text()
-        tag_type = tag.name # 'persName' lub 'placeName'
-
-        parent_block = tag.find_parent(['p', 'ab', 'note', 'head'])
-        
-        if parent_block:
-            raw_text = parent_block.get_text()
-            # zamana wielokrotnych spacji, tabulatorów i znaków nowej linii na jedną spację
-            context = re.sub(r'\s+', ' ', raw_text).strip()
-        else:
-            context = name
-
-        print(f"\nPrzetwarzam: {name} ({tag_type}) dla kontekstu: {context}")
-
-        entity_analysis = analyze_name_with_gemini(name, context, tag_type)
-        normalized_name = entity_analysis["normalized_best"]
-        print(f" Znormalizowano do: {normalized_name} (pewność: {entity_analysis['confidence']})")
-        
-        candidates = collect_candidates(entity_analysis, context, tag_type)
-
-        selected_url = ask_gemini_to_disambiguate(name, normalized_name, context, candidates, entity_analysis=entity_analysis)
-        
-        tag['key'] = normalized_name
-        if selected_url and selected_url.startswith("http"):
-            tag['ref'] = selected_url
-            print(f" -> Przypisano: {selected_url}")
-            # zapis cząstkowy pliku xml
-            save_clean_xml(soup, output_file)
-        else:
-            print(" -> Brak dopasowania (Gemini zwrócił NONE).")
-            
-        time.sleep(2) 
-
-    # końcowy zapis zmodyfikowanego XML
-    save_clean_xml(soup, output_file)
-    print(f"\nZakończono! Zapisano plik: {output_file}")
-
-
-# -------------------------------- MAIN ---------------------------------------
-if __name__ == "__main__":
-
-    input_txt = "document.txt"
-    initial_xml = "tmp.xml"
-    final_xml = "document.xml"
-
-    if create_initial_tei(input_txt, initial_xml):
-        process_tei_xml(initial_xml, final_xml)

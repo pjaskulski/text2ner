@@ -7,7 +7,15 @@ from bs4 import BeautifulSoup
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
-from names_linking import analyze_name_with_gemini, collect_candidates, ask_gemini_to_disambiguate, tag_entities_with_gemini
+from names_linking import (
+    diagnostic_log,
+    extract_years_from_text,
+    link_entity,
+    normalize_whitespace,
+    start_diagnostic_session,
+    stop_diagnostic_session,
+    tag_entities_with_gemini,
+)
 
 
 load_dotenv()
@@ -85,8 +93,13 @@ def index():
 @app.route('/process', methods=['POST'])
 @requires_auth
 def process():
+    diagnostic_log_path = None
     try:
+      diagnostic_log_path = start_diagnostic_session(log_dir="log")
       raw_text = request.json.get('text', '')[:5000]
+      document_years = extract_years_from_text(raw_text)
+      diagnostic_log(f"Uruchomiono /process dla tekstu o długości {len(raw_text)} znaków.")
+      diagnostic_log(f"Wykryte lata dokumentu: {document_years}")
 
       # NER Tagging
       tagged_xml = tag_entities_with_gemini(raw_text)
@@ -96,7 +109,10 @@ def process():
       soup = BeautifulSoup(tagged_xml, 'xml')
 
       entities = []
+      unresolved_entities = []
       seen_entities = set()  # zbiór do śledzenia unikalnych linków
+      seen_unresolved_entities = set()
+      resolved_entity_cache = {}
 
       # Entity Linking
       tags = soup.find_all(['persName', 'placeName'])
@@ -105,16 +121,31 @@ def process():
           tag_type = tag.name
 
           context = get_entity_context(tag)
+          cache_key = (tag_type, normalize_whitespace(name).casefold())
+          if cache_key in resolved_entity_cache:
+              link_result = resolved_entity_cache[cache_key]
+              diagnostic_log(
+                  f"Użyto cache dla encji '{name}' ({tag_type}) -> "
+                  f"{link_result['decision'].get('selected_url')}"
+              )
+          else:
+              link_result = link_entity(
+                  name,
+                  context,
+                  tag_type,
+                  document_years=document_years,
+              )
+              if link_result["decision"].get("status") == "selected":
+                  resolved_entity_cache[cache_key] = link_result
 
-          entity_analysis = analyze_name_with_gemini(name, context, tag_type)
-          norm_name = entity_analysis["normalized_best"]
+          entity_analysis = link_result["entity_analysis"]
+          norm_name = link_result["normalized_name"]
+          decision = link_result["decision"]
           tag['key'] = norm_name
 
-          candidates = collect_candidates(entity_analysis, context, tag_type)
+          selected_url = decision.get("selected_url")
 
-          selected_url = ask_gemini_to_disambiguate(name, norm_name, context, candidates, entity_analysis=entity_analysis)
-
-          if selected_url:
+          if decision.get("status") == "selected" and selected_url:
               tag['ref'] = selected_url
 
               # KLUCZ UNIKALNOŚCI: Nazwa + URL
@@ -123,9 +154,19 @@ def process():
                   entities.append({"name": norm_name,
                                  "surface": name,
                                  "type": tag_type,
-                                 "url": selected_url
+                                  "url": selected_url
                   })
                   seen_entities.add(entity_key)
+          else:
+              unresolved_key = (tag_type, norm_name, normalize_whitespace(name))
+              if unresolved_key not in seen_unresolved_entities:
+                  unresolved_entities.append({
+                      "name": norm_name,
+                      "surface": name,
+                      "type": tag_type,
+                      "reason": decision.get("reason", "not_selected"),
+                  })
+                  seen_unresolved_entities.add(unresolved_key)
 
       inner_xml = soup.prettify(formatter="minimal")
       inner_xml = re.sub(r'<(persName|placeName)(.*?)>\s*(.*?)\s*</\1>', r'<\1\2>\3</\1>', inner_xml, flags=re.DOTALL)
@@ -134,15 +175,21 @@ def process():
       full_tei_xml = f"{TEI_HEADER}\n{inner_xml}\n{TEI_FOOTER}"
 
       entities.sort(key=lambda x: x['name'])
+      unresolved_entities.sort(key=lambda x: (x['type'], x['name'], x['surface']))
 
       return jsonify({
           "xml": full_tei_xml,
-          "entities": entities
+          "entities": entities,
+          "unresolved_entities": unresolved_entities,
+          "diagnostic_log_file": diagnostic_log_path
       })
     
     except Exception as e:
+        diagnostic_log(f"Błąd krytyczny w /process: {e}")
         print(f"Błąd krytyczny w /process: {e}")
         return jsonify({"error": str(e)}), 500
+    finally:
+        stop_diagnostic_session()
 
 
 # -------------------------------- MAIN ---------------------------------------

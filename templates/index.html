@@ -47,7 +47,9 @@
                     </span>
                 </div>
                 <p class="text-sm text-gray-500 font-medium mt-1">
-                    Automatyczna konwersja dokumentów historycznych do formatu TEI-XML z identyfikacją encji
+                    Automatyczna konwersja dokumentów historycznych do formatu TEI-XML z identyfikacją encji<br>
+                    <small>(mechanizm dostosowany do źródeł z XIV - XVI wieku w języku łacińskim, polskim, niemieckim,<br> 
+                        wykorzystuje zewnętrzne bazy referencyjne oraz model językowy dlatego analiza może trwać nawet kilka minut)</small>
                 </p>
             </div>
 
@@ -147,6 +149,12 @@
             <div>
                 <h2 class="text-lg font-semibold mb-2 text-gray-800">Zidentyfikowane encje:</h2>
                 <div id="entityList" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
+            </div>
+
+            <div>
+                <h2 class="text-lg font-semibold mb-2 text-gray-800">Niezidentyfikowane tagi:</h2>
+                <div id="unresolvedEntitySummary" class="hidden text-sm text-gray-500 mb-3"></div>
+                <div id="unresolvedEntityList" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
             </div>
         </div>
     </div>
@@ -259,6 +267,30 @@
                     </div>
                 `).join('');
 
+                const unresolvedEntities = data.unresolved_entities || [];
+                const unresolvedSummary = document.getElementById('unresolvedEntitySummary');
+                const unresolvedList = document.getElementById('unresolvedEntityList');
+
+                if (unresolvedEntities.length > 0) {
+                    unresolvedSummary.classList.remove('hidden');
+                    unresolvedSummary.textContent = `Łącznie niezidentyfikowanych tagów: ${unresolvedEntities.length}`;
+                    unresolvedList.innerHTML = unresolvedEntities.map(e => `
+                        <div class="p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                            <span class="text-xs font-bold uppercase ${e.type === 'persName' ? 'text-purple-600' : 'text-orange-600'}">${e.type}</span>
+                            <p class="font-medium text-gray-900">${e.surface && e.surface !== e.name ? `${e.surface} (${e.name})` : e.name}</p>
+                            <p class="text-sm text-gray-500">Nie przypisano identyfikatora referencyjnego.</p>
+                        </div>
+                    `).join('');
+                } else {
+                    unresolvedSummary.classList.add('hidden');
+                    unresolvedSummary.textContent = '';
+                    unresolvedList.innerHTML = `
+                        <div class="p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
+                            Wszystkie otagowane encje zostały zidentyfikowane.
+                        </div>
+                    `;
+                }
+
                 document.getElementById('results').classList.remove('hidden');
             } catch (err) {
                 alert("Błąd podczas analizy.");
@@ -345,6 +377,9 @@ Sultan Bayazeth han, Dei gratia imperator Graeciae, Asiae atque Europae et mariu
             document.getElementById('results').classList.add('hidden');
             document.getElementById('xmlOutput').textContent = '';
             document.getElementById('entityList').innerHTML = '';
+            document.getElementById('unresolvedEntityList').innerHTML = '';
+            document.getElementById('unresolvedEntitySummary').textContent = '';
+            document.getElementById('unresolvedEntitySummary').classList.add('hidden');
         }
 
         // funkcja Wyczyść
