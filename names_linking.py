@@ -1441,9 +1441,11 @@ def filter_candidates_by_tag(candidates, tag_type, source_config):
         elif tag_type == "placeName" and candidate_is_place(candidate, source_config):
             filtered.append(candidate)
 
+    filtered_labels = [
+        f"{candidate['source']}:{candidate['id']}" for candidate in filtered
+    ]
     diagnostic_log(
-        f"Filtrowanie {source_config['source']} dla {tag_type}: "
-        f"{[f'{candidate['source']}:{candidate['id']}' for candidate in filtered]}"
+        f"Filtrowanie {source_config['source']} dla {tag_type}: {filtered_labels}"
     )
     return filtered
 
