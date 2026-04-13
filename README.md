@@ -32,6 +32,12 @@ Aplikacja stara się nie “zgadywać na siłę”. Jeżeli kandydat nie pasuje 
 
 Poniżej znajduje się uproszczony opis przebiegu pracy aplikacji od wejścia do wyniku.
 
+Pełny diagram procesu jest dostępny w trzech wersjach:
+
+- [PROCESS_DIAGRAM.dot](/home/piotr/ihpan/text2ner/PROCESS_DIAGRAM.dot) - źródło Graphviz
+- [PROCESS_DIAGRAM.svg](/home/piotr/ihpan/text2ner/PROCESS_DIAGRAM.svg) - wersja do szybkiego podglądu
+- [PROCESS_DIAGRAM.pdf](/home/piotr/ihpan/text2ner/PROCESS_DIAGRAM.pdf) - wersja do druku i udostępniania
+
 ### 1. Przyjęcie tekstu
 
 Użytkownik wkleja tekst do interfejsu WWW, a aplikacja wysyła go do endpointu `POST /process`.
@@ -171,3 +177,18 @@ Projekt korzysta z bibliotek wymienionych w `requirements.txt`, w tym:
 - Aplikacja działa najlepiej na tekstach historycznych z wyraźnymi nazwami osób i miejsc.
 - Rozstrzyganie encji ma charakter wspomagający, nie gwarantuje pełnej poprawności naukowej i powinno być traktowane jako etap roboczy redakcji cyfrowej.
 - W kodzie istnieje semantyczny fallback SPARQL do Wikidaty, ale jest obecnie wyłączony ze względu na problemy z wydajnością zapytań.
+
+## Diagram procesu
+
+Wersja Mermaid została wycofana. Diagram procesu utrzymywany jest teraz w Graphviz jako:
+
+- [PROCESS_DIAGRAM.dot](/home/piotr/ihpan/text2ner/PROCESS_DIAGRAM.dot) - plik źródłowy
+- [PROCESS_DIAGRAM.svg](/home/piotr/ihpan/text2ner/PROCESS_DIAGRAM.svg) - podstawowa wersja do przeglądania
+- [PROCESS_DIAGRAM.pdf](/home/piotr/ihpan/text2ner/PROCESS_DIAGRAM.pdf) - wersja do eksportu i wydruku
+
+Aktualizacja renderów:
+
+```bash
+dot -Tsvg PROCESS_DIAGRAM.dot -o PROCESS_DIAGRAM.svg
+dot -Tpdf PROCESS_DIAGRAM.dot -o PROCESS_DIAGRAM.pdf
+```

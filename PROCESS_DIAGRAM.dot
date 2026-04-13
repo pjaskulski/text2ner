@@ -1,0 +1,181 @@
+digraph text2ner_process {
+    graph [
+        rankdir=TB,
+        labelloc="t",
+        label="TEXT2NER: proces przetwarzania tekstu do TEI z identyfikacją encji",
+        fontsize=20,
+        fontname="Helvetica",
+        pad=0.3,
+        nodesep=0.35,
+        ranksep=0.6,
+        splines=polyline,
+        bgcolor="white"
+    ];
+
+    node [
+        shape=box,
+        style="rounded,filled",
+        fillcolor="#F8FAFC",
+        color="#94A3B8",
+        fontname="Helvetica",
+        fontsize=11,
+        margin="0.16,0.10"
+    ];
+
+    edge [
+        color="#475569",
+        arrowsize=0.7,
+        fontname="Helvetica",
+        fontsize=10
+    ];
+
+    start [label="Użytkownik wkleja tekst\nw aplikacji WWW", fillcolor="#E0F2FE", color="#0284C7"];
+
+    subgraph cluster_request {
+        label="1. Przyjęcie tekstu i tagowanie";
+        color="#CBD5E1";
+        style="rounded";
+
+        post_process [label="POST /process\nwe Flask"];
+        log_file [label="Utworzenie pliku\nlogu diagnostycznego"];
+        trim_input [label="Przycięcie wejścia\ndo 5000 znaków"];
+        extract_doc_years [label="Ekstrakcja lat\nz całego dokumentu"];
+        tag_gemini [label="Gemini:\ntag_entities_with_gemini"];
+        tagged_xml [label="XML-like output\nz persName i placeName"];
+        parse_xml [label="BeautifulSoup parsuje XML"];
+        entity_loop [label="Pętla po wszystkich\nencjach w dokumencie"];
+    }
+
+    subgraph cluster_entity {
+        label="2. Przetwarzanie pojedynczej encji";
+        color="#CBD5E1";
+        style="rounded";
+
+        surface_context [label="Pobranie surface form\ni kontekstu encji"];
+        cache_check [shape=diamond, label="Czy encja była już\nskutecznie zidentyfikowana\nw tym dokumencie?"];
+        cache_hit [label="Użycie wyniku z cache\n(key/ref)"];
+        link_entity [label="link_entity(...)",
+            fillcolor="#F1F5F9", color="#64748B"];
+
+        analyze_form [label="Gemini:\nanalyze_form_with_gemini"];
+        analyze_outputs [label="normalized_best\nlemma_candidates\nsurface_variants\noffice_terms\nplace_terms\ncontext_clues\ncontext_years"];
+        build_plan [label="build_query_plan"];
+        plan_outputs [label="forma z tekstu\nforma znormalizowana\npolskie odpowiedniki\nkombinacje: imię + urząd + miejsce"];
+    }
+
+    subgraph cluster_candidates {
+        label="3. Wyszukiwanie kandydatów";
+        color="#CBD5E1";
+        style="rounded";
+
+        collect_local [label="collect_candidates:\nźródła lokalne"];
+        wikihum_search [label="Special:Search ~2\nw WikiHum"];
+        kul_search [label="Special:Search ~2\nw va.wiki.kul.pl"];
+        local_filter [label="Filtrowanie po instance of"];
+        local_rank [label="Dedup i uporządkowanie\nkandydatów lokalnych"];
+        local_candidates [shape=diamond, label="Czy są kandydaci\nlokalni?"];
+        local_decision [label="Gemini:\nbuild_link_decision"];
+        local_selected [shape=diamond, label="Czy wybrano\nkandydata lokalnego?"];
+
+        wikidata_fallback [label="Fallback standardowy\ndo Wikidata"];
+        wikidata_search [label="Special:Search ~2\nw Wikidata"];
+        wikidata_filter [label="Filtrowanie po instance of"];
+        wikidata_rank [label="Dedup i uporządkowanie\nkandydatów Wikidata"];
+        wikidata_decision [label="Gemini:\nbuild_link_decision"];
+        wikidata_selected [shape=diamond, label="Czy wybrano\nkandydata z Wikidata?"];
+
+        wikidata_retry [label="Druga próba:\ntylko kandydaci z Wikidata"];
+        wikidata_retry_search [label="Special:Search ~2\nw Wikidata"];
+        wikidata_retry_filter [label="Filtrowanie po instance of"];
+        wikidata_retry_rank [label="Dedup i uporządkowanie\nkandydatów"];
+        wikidata_retry_decision [label="Gemini:\nbuild_link_decision"];
+    }
+
+    subgraph cluster_plwiki {
+        label="4. Fallback plwiki dla osób";
+        color="#CBD5E1";
+        style="rounded";
+
+        person_check [shape=diamond, label="Czy to persName\nz urzędem lub miejscem?"];
+        plwiki_fallback [label="Uruchom fallback\nplwiki"];
+        plwiki_queries [label="Budowa polskich zapytań\nencyklopedycznych"];
+        plwiki_examples [label="Np.:\nMikołaj biskup chełmiński"];
+        plwiki_search [label="plwiki search API"];
+        plwiki_meta [label="Pobranie pageprops\ni extract"];
+        plwiki_qid [label="Odczyt wikibase_item"];
+        plwiki_to_wd [label="Konwersja trafień\nna kandydatów Wikidata"];
+        plwiki_enrich [label="Dołączenie tytułu i leadu\nz plwiki"];
+        plwiki_decision [label="Gemini:\nbuild_link_decision"];
+        plwiki_selected [shape=diamond, label="Czy wybrano\nkandydata z plwiki?"];
+    }
+
+    subgraph cluster_finish {
+        label="5. Zapis wyniku i odpowiedź";
+        color="#CBD5E1";
+        style="rounded";
+
+        selected [label="decision = selected", fillcolor="#DCFCE7", color="#16A34A"];
+        unresolved [label="decision = none", fillcolor="#FEF3C7", color="#D97706"];
+        set_key_ref [label="Ustawienie key i ref"];
+        set_key_only [label="Ustawienie tylko key"];
+        add_resolved [label="Dodanie do listy\nzidentyfikowanych encji"];
+        add_unresolved [label="Dodanie do listy\nniezidentyfikowanych encji"];
+        next_entity [shape=diamond, label="Czy są kolejne\nencje?"];
+        build_tei [label="Złożenie końcowego\nTEI XML"];
+        sort_entities [label="Sortowanie entities"];
+        sort_unresolved [label="Sortowanie\nunresolved_entities"];
+        json_response [label="JSON response", fillcolor="#E0F2FE", color="#0284C7"];
+        out_xml [label="xml"];
+        out_entities [label="entities"];
+        out_unresolved [label="unresolved_entities"];
+        out_log [label="diagnostic_log_file"];
+    }
+
+    start -> post_process;
+    post_process -> log_file -> trim_input -> extract_doc_years -> tag_gemini -> tagged_xml -> parse_xml -> entity_loop;
+
+    entity_loop -> surface_context -> cache_check;
+    cache_check -> cache_hit [label="tak"];
+    cache_check -> link_entity [label="nie"];
+
+    link_entity -> analyze_form -> analyze_outputs -> build_plan -> plan_outputs -> collect_local;
+    collect_local -> wikihum_search;
+    collect_local -> kul_search;
+    wikihum_search -> local_filter;
+    kul_search -> local_filter;
+    local_filter -> local_rank -> local_candidates;
+
+    local_candidates -> local_decision [label="tak"];
+    local_candidates -> wikidata_fallback [label="nie"];
+    local_decision -> local_selected;
+    local_selected -> selected [label="tak"];
+    local_selected -> wikidata_retry [label="nie"];
+
+    wikidata_fallback -> wikidata_search -> wikidata_filter -> wikidata_rank -> wikidata_decision -> wikidata_selected;
+
+    wikidata_retry -> wikidata_retry_search -> wikidata_retry_filter -> wikidata_retry_rank -> wikidata_retry_decision -> wikidata_selected;
+
+    wikidata_selected -> selected [label="tak"];
+    wikidata_selected -> person_check [label="nie"];
+
+    person_check -> unresolved [label="nie"];
+    person_check -> plwiki_fallback [label="tak"];
+    plwiki_fallback -> plwiki_queries -> plwiki_examples -> plwiki_search -> plwiki_meta -> plwiki_qid -> plwiki_to_wd -> plwiki_enrich -> plwiki_decision -> plwiki_selected;
+    plwiki_selected -> selected [label="tak"];
+    plwiki_selected -> unresolved [label="nie"];
+
+    selected -> set_key_ref -> add_resolved;
+    unresolved -> set_key_only -> add_unresolved;
+    cache_hit -> add_resolved;
+
+    add_resolved -> next_entity;
+    add_unresolved -> next_entity;
+    next_entity -> entity_loop [label="tak"];
+    next_entity -> build_tei [label="nie"];
+
+    build_tei -> sort_entities -> sort_unresolved -> json_response;
+    json_response -> out_xml;
+    json_response -> out_entities;
+    json_response -> out_unresolved;
+    json_response -> out_log;
+}
