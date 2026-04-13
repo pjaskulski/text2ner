@@ -64,6 +64,10 @@
         .entity-org:hover {
             background-color: #ddd6fe;
         }
+
+        .preview-text {
+            white-space: normal;
+        }
     </style>
 </head>
 
@@ -201,6 +205,11 @@
         </div>
     </div>
 
+    <div id="tagContextMenu"
+        class="hidden fixed z-50 min-w-[220px] rounded-lg border border-gray-200 bg-white shadow-xl py-1 text-sm">
+        <div id="tagContextMenuItems"></div>
+    </div>
+
     <div id="helpModal"
         class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
         <div class="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
@@ -237,6 +246,7 @@
                         <li><strong>Kod XML:</strong> Podgląd struktury TEI-XML gotowy do zapisu.</li>
                         <li><strong>Podgląd tekstu:</strong> Interaktywna lektura z dymkami (tooltips). Najedź myszą na
                             osobę, miejsce, datę, funkcję lub instytucję, by zobaczyć informacje pomocnicze.</li>
+                        <li><strong>Edycja ręczna:</strong> W widoku podglądu możesz kliknąć prawym przyciskiem na tag, aby go usunąć lub zmienić jego typ. Możesz też zaznaczyć nieotagowany fragment i kliknąć prawym przyciskiem, aby dodać nowy tag.</li>
                     </ul>
                 </section>
 
@@ -281,6 +291,163 @@
     </div>
 
     <script>
+        const EDITABLE_TAG_TYPES = ['persName', 'placeName', 'orgName', 'roleName', 'date'];
+        let currentXmlDoc = null;
+        let currentXmlHasDeclaration = true;
+        let currentIdentificationPerformed = false;
+
+        function parseXmlDocument(xml) {
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(xml, "text/xml");
+            const parserError = xmlDoc.getElementsByTagName("parsererror")[0];
+            if (parserError) {
+                throw new Error("Nie udało się sparsować XML po stronie przeglądarki.");
+            }
+            return xmlDoc;
+        }
+
+        function serializeCurrentXmlDoc() {
+            if (!currentXmlDoc) return '';
+            const serializer = new XMLSerializer();
+            let serialized = serializer.serializeToString(currentXmlDoc);
+            if (currentXmlHasDeclaration && !serialized.startsWith('<?xml')) {
+                serialized = `<?xml version="1.0" encoding="UTF-8"?>\n` + serialized;
+            }
+            return serialized;
+        }
+
+        function getXmlBodyNode() {
+            if (!currentXmlDoc) return null;
+            return currentXmlDoc.getElementsByTagNameNS('*', "body")[0]
+                || currentXmlDoc.getElementsByTagName("body")[0]
+                || null;
+        }
+
+        function getNodeLocalName(node) {
+            return node ? (node.localName || node.nodeName) : '';
+        }
+
+        function createXmlElement(tagName) {
+            const body = getXmlBodyNode();
+            const namespaceUri = body ? body.namespaceURI : null;
+            return namespaceUri
+                ? currentXmlDoc.createElementNS(namespaceUri, tagName)
+                : currentXmlDoc.createElement(tagName);
+        }
+
+        function getXmlNodeByPath(path) {
+            const body = getXmlBodyNode();
+            if (!body || !path || !path.startsWith('body')) return null;
+
+            let currentNode = body;
+            const segments = path.split('.').slice(1);
+            for (const segment of segments) {
+                const childIndex = Number(segment);
+                if (Number.isNaN(childIndex) || !currentNode.childNodes[childIndex]) {
+                    return null;
+                }
+                currentNode = currentNode.childNodes[childIndex];
+            }
+            return currentNode;
+        }
+
+        function stripIdentificationAttributes() {
+            if (!currentXmlDoc) return;
+            ['persName', 'placeName'].forEach(tagName => {
+                const nodes = currentXmlDoc.getElementsByTagNameNS('*', tagName).length
+                    ? currentXmlDoc.getElementsByTagNameNS('*', tagName)
+                    : currentXmlDoc.getElementsByTagName(tagName);
+                Array.from(nodes).forEach(node => {
+                    node.removeAttribute('key');
+                    node.removeAttribute('ref');
+                });
+            });
+        }
+
+        function syncXmlOutputFromCurrentDoc() {
+            const xmlCode = document.getElementById('xmlOutput');
+            xmlCode.textContent = serializeCurrentXmlDoc();
+            delete xmlCode.dataset.highlighted;
+            hljs.highlightElement(xmlCode);
+        }
+
+        function invalidateIdentificationAfterManualEdit(message) {
+            stripIdentificationAttributes();
+            currentIdentificationPerformed = false;
+            syncXmlOutputFromCurrentDoc();
+            renderPreview();
+            renderIdentificationLists({
+                identification_performed: false,
+                entities: [],
+                unresolved_entities: [],
+            });
+            renderWorkflowStatus(message + ' Możesz teraz uruchomić identyfikację ponownie.');
+            setIdentifyEnabled(true);
+        }
+
+        function hideTagContextMenu() {
+            document.getElementById('tagContextMenu').classList.add('hidden');
+            document.getElementById('tagContextMenuItems').innerHTML = '';
+        }
+
+        function showTagContextMenu(x, y, items) {
+            const menu = document.getElementById('tagContextMenu');
+            const menuItems = document.getElementById('tagContextMenuItems');
+            menuItems.innerHTML = '';
+
+            items.forEach(item => {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.textContent = item.label;
+                button.className = `block w-full text-left px-4 py-2 hover:bg-gray-100 ${item.danger ? 'text-red-600' : 'text-gray-700'}`;
+                button.addEventListener('click', () => {
+                    hideTagContextMenu();
+                    item.action();
+                });
+                menuItems.appendChild(button);
+            });
+
+            menu.classList.remove('hidden');
+            menu.style.left = `${x}px`;
+            menu.style.top = `${y}px`;
+        }
+
+        function getTagStyleClass(tagName) {
+            return {
+                persName: 'entity-pers',
+                placeName: 'entity-place',
+                orgName: 'entity-org',
+                date: 'entity-date',
+                roleName: 'entity-role',
+            }[tagName] || '';
+        }
+
+        function getTagTooltip(node) {
+            const nodeName = getNodeLocalName(node);
+            if (nodeName === 'persName' || nodeName === 'placeName') {
+                const key = node.getAttribute('key') || 'Brak nazwy znormalizowanej';
+                const ref = node.getAttribute('ref') || 'Brak identyfikatora';
+                return `${key}\nID: ${ref}`;
+            }
+            if (nodeName === 'date') {
+                return `when: ${node.getAttribute('when') || 'Brak daty ISO'}`;
+            }
+            return nodeName;
+        }
+
+        function isIgnorablePreviewWhitespace(node) {
+            if (!node || node.nodeType !== Node.TEXT_NODE) {
+                return false;
+            }
+
+            if ((node.nodeValue || '').trim() !== '') {
+                return false;
+            }
+
+            const parentName = getNodeLocalName(node.parentNode);
+            return parentName === 'body' || parentName === 'div' || parentName === 'p';
+        }
+
         function setActionLoading(buttonId, spinnerId, textId, loading, idleText, loadingText) {
             document.getElementById(buttonId).disabled = loading;
             document.getElementById(spinnerId).classList.toggle('hidden', !loading);
@@ -292,10 +459,9 @@
         }
 
         function renderXml(xml) {
-            const xmlCode = document.getElementById('xmlOutput');
-            xmlCode.textContent = xml;
-            delete xmlCode.dataset.highlighted;
-            hljs.highlightElement(xmlCode);
+            currentXmlHasDeclaration = String(xml || '').trim().startsWith('<?xml');
+            currentXmlDoc = parseXmlDocument(xml);
+            syncXmlOutputFromCurrentDoc();
         }
 
         function renderIdentificationLists(data) {
@@ -373,6 +539,7 @@
                 if (!response.ok) throw new Error(data.error || "Błąd podczas rozpoznawania.");
 
                 renderXml(data.xml);
+                currentIdentificationPerformed = false;
                 renderIdentificationLists(data);
                 renderWorkflowStatus('Etap 1 zakończony: TEI-XML z rozpoznanymi encjami jest gotowy. Możesz teraz uruchomić identyfikację referencyjną.');
                 document.getElementById('results').classList.remove('hidden');
@@ -402,6 +569,7 @@
                 if (!response.ok) throw new Error(data.error || "Błąd podczas identyfikacji.");
 
                 renderXml(data.xml);
+                currentIdentificationPerformed = true;
                 renderIdentificationLists(data);
                 renderWorkflowStatus('Etap 2 zakończony: encje typu persName i placeName zostały sprawdzone w bazach referencyjnych.');
                 document.getElementById('results').classList.remove('hidden');
@@ -495,6 +663,9 @@ Sultan Bayazeth han, Dei gratia imperator Graeciae, Asiae atque Europae et mariu
             document.getElementById('unresolvedEntitySummary').classList.add('hidden');
             document.getElementById('workflowStatus').textContent = '';
             setIdentifyEnabled(false);
+            hideTagContextMenu();
+            currentXmlDoc = null;
+            currentIdentificationPerformed = false;
         }
 
         // funkcja Wyczyść
@@ -557,49 +728,232 @@ Sultan Bayazeth han, Dei gratia imperator Graeciae, Asiae atque Europae et mariu
         }
 
         function renderPreview() {
-            const xmlSource = document.getElementById('xmlOutput').textContent;
             const previewDiv = document.getElementById('textPreview');
-            if (!xmlSource) return;
+            if (!currentXmlDoc) {
+                const xmlSource = document.getElementById('xmlOutput').textContent;
+                if (!xmlSource) return;
+                currentXmlDoc = parseXmlDocument(xmlSource);
+            }
 
-            const parser = new DOMParser();
-            const xmlDoc = parser.parseFromString(xmlSource, "text/xml");
-            const body = xmlDoc.getElementsByTagName("body")[0];
-
+            const body = getXmlBodyNode();
             if (!body) {
                 previewDiv.innerHTML = "Nie znaleziono sekcji body w dokumencie.";
                 return;
             }
 
-            // rekurencyjna funkcja zamieniająca XML na HTML Preview
-            function processNode(node) {
-                if (node.nodeType === 3) return node.nodeValue; // Tekst
+            function buildPreviewNode(node, path) {
+                if (node.nodeType === Node.TEXT_NODE) {
+                    if (isIgnorablePreviewWhitespace(node)) {
+                        return null;
+                    }
+                    const span = document.createElement('span');
+                    span.className = 'preview-text';
+                    span.dataset.textPath = path;
+                    span.textContent = node.nodeValue;
+                    return span;
+                }
 
-                let content = "";
-                for (let child of node.childNodes) content += processNode(child);
+                if (node.nodeType !== Node.ELEMENT_NODE) {
+                    return null;
+                }
 
-                if (node.nodeName === "p") return `<p class="mb-4">${content}</p>`;
-                if (node.nodeName === "persName" || node.nodeName === "placeName") {
-                    const typeClass = node.nodeName === "persName" ? "entity-pers" : "entity-place";
-                    const key = node.getAttribute("key") || "Brak nazwy znormalizowanej";
-                    const ref = node.getAttribute("ref") || "Brak identyfikatora";
-                    const tooltip = `${key}\nID: ${ref}`;
-                    return `<span class="${typeClass}" title="${tooltip}">${content}</span>`;
+                let element;
+                const nodeName = getNodeLocalName(node);
+
+                if (nodeName === "p") {
+                    element = document.createElement('p');
+                    element.className = 'mb-4';
+                } else if (nodeName === "div") {
+                    element = document.createElement('div');
+                } else if (EDITABLE_TAG_TYPES.includes(nodeName) || nodeName === "orgName") {
+                    element = document.createElement('span');
+                    element.className = `${getTagStyleClass(nodeName)} tei-tag`;
+                    element.dataset.nodePath = path;
+                    element.dataset.tagName = nodeName;
+                    element.title = getTagTooltip(node);
+                } else {
+                    element = document.createElement('span');
                 }
-                if (node.nodeName === "orgName") {
-                    return `<span class="entity-org" title="orgName">${content}</span>`;
-                }
-                if (node.nodeName === "date") {
-                    const when = node.getAttribute("when") || "Brak daty ISO";
-                    return `<span class="entity-date" title="when: ${when}">${content}</span>`;
-                }
-                if (node.nodeName === "roleName") {
-                    return `<span class="entity-role" title="roleName">${content}</span>`;
-                }
-                if (node.nodeName === "div") return `<div>${content}</div>`;
-                return content;
+
+                Array.from(node.childNodes).forEach((childNode, index) => {
+                    const previewChild = buildPreviewNode(childNode, `${path}.${index}`);
+                    if (previewChild) {
+                        element.appendChild(previewChild);
+                    }
+                });
+
+                return element;
             }
 
-            previewDiv.innerHTML = processNode(body);
+            previewDiv.innerHTML = '';
+            Array.from(body.childNodes).forEach((childNode, index) => {
+                const previewChild = buildPreviewNode(childNode, `body.${index}`);
+                if (previewChild) {
+                    previewDiv.appendChild(previewChild);
+                }
+            });
+        }
+
+        function closestElement(node, selector) {
+            if (!node) return null;
+            const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+            return element ? element.closest(selector) : null;
+        }
+
+        function getOffsetWithinContainer(containerElement, boundaryNode, boundaryOffset) {
+            const range = document.createRange();
+            range.selectNodeContents(containerElement);
+            range.setEnd(boundaryNode, boundaryOffset);
+            return range.toString().length;
+        }
+
+        function getSelectionTagCandidate() {
+            const previewDiv = document.getElementById('textPreview');
+            const selection = window.getSelection();
+            if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+                return { valid: false, reason: 'Brak zaznaczenia.' };
+            }
+
+            const range = selection.getRangeAt(0);
+            if (!previewDiv.contains(range.startContainer) || !previewDiv.contains(range.endContainer)) {
+                return { valid: false, reason: 'Zaznaczenie musi znajdować się w podglądzie tekstu.' };
+            }
+
+            if (closestElement(range.startContainer, '.tei-tag') || closestElement(range.endContainer, '.tei-tag')) {
+                return { valid: false, reason: 'Nie można dodawać tagu wewnątrz już otagowanego fragmentu.' };
+            }
+
+            const startTextContainer = closestElement(range.startContainer, '[data-text-path]');
+            const endTextContainer = closestElement(range.endContainer, '[data-text-path]');
+            if (!startTextContainer || !endTextContainer) {
+                return { valid: false, reason: 'Zaznaczenie musi obejmować zwykły tekst.' };
+            }
+
+            if (startTextContainer.dataset.textPath !== endTextContainer.dataset.textPath) {
+                return { valid: false, reason: 'Na razie można tagować tylko pojedynczy ciągły fragment tekstu bez przekraczania istniejących tagów.' };
+            }
+
+            const startOffset = getOffsetWithinContainer(startTextContainer, range.startContainer, range.startOffset);
+            const endOffset = getOffsetWithinContainer(endTextContainer, range.endContainer, range.endOffset);
+            if (startOffset === endOffset || !range.toString().trim()) {
+                return { valid: false, reason: 'Zaznaczenie jest puste lub zawiera tylko spacje.' };
+            }
+
+            return {
+                valid: true,
+                textPath: startTextContainer.dataset.textPath,
+                startOffset,
+                endOffset,
+                text: range.toString(),
+            };
+        }
+
+        function addTagToSelection(tagName) {
+            const candidate = getSelectionTagCandidate();
+            if (!candidate.valid) {
+                renderWorkflowStatus(candidate.reason);
+                return;
+            }
+
+            const xmlTextNode = getXmlNodeByPath(candidate.textPath);
+            if (!xmlTextNode || xmlTextNode.nodeType !== Node.TEXT_NODE) {
+                renderWorkflowStatus('Nie udało się odnaleźć odpowiadającego fragmentu XML do otagowania.');
+                return;
+            }
+
+            const textValue = xmlTextNode.nodeValue || '';
+            const before = textValue.slice(0, candidate.startOffset);
+            const selected = textValue.slice(candidate.startOffset, candidate.endOffset);
+            const after = textValue.slice(candidate.endOffset);
+            if (!selected) {
+                renderWorkflowStatus('Nie udało się wyodrębnić zaznaczonego fragmentu.');
+                return;
+            }
+
+            const fragment = currentXmlDoc.createDocumentFragment();
+            if (before) fragment.appendChild(currentXmlDoc.createTextNode(before));
+            const taggedElement = createXmlElement(tagName);
+            taggedElement.textContent = selected;
+            fragment.appendChild(taggedElement);
+            if (after) fragment.appendChild(currentXmlDoc.createTextNode(after));
+            xmlTextNode.parentNode.replaceChild(fragment, xmlTextNode);
+
+            window.getSelection().removeAllRanges();
+            invalidateIdentificationAfterManualEdit(`Dodano tag ${tagName} dla fragmentu „${selected}”.`);
+        }
+
+        function unwrapXmlElementByPath(nodePath) {
+            const xmlNode = getXmlNodeByPath(nodePath);
+            if (!xmlNode || xmlNode.nodeType !== Node.ELEMENT_NODE || !xmlNode.parentNode) {
+                renderWorkflowStatus('Nie udało się usunąć tagu.');
+                return;
+            }
+
+            const parent = xmlNode.parentNode;
+            while (xmlNode.firstChild) {
+                parent.insertBefore(xmlNode.firstChild, xmlNode);
+            }
+            parent.removeChild(xmlNode);
+
+            invalidateIdentificationAfterManualEdit('Usunięto tag z zaznaczonego fragmentu.');
+        }
+
+        function changeXmlElementTag(nodePath, newTagName) {
+            const xmlNode = getXmlNodeByPath(nodePath);
+            if (!xmlNode || xmlNode.nodeType !== Node.ELEMENT_NODE || !xmlNode.parentNode) {
+                renderWorkflowStatus('Nie udało się zmienić typu tagu.');
+                return;
+            }
+
+            if (getNodeLocalName(xmlNode) === newTagName) {
+                return;
+            }
+
+            const renamedNode = createXmlElement(newTagName);
+            if (newTagName === 'date' && xmlNode.getAttribute('when')) {
+                renamedNode.setAttribute('when', xmlNode.getAttribute('when'));
+            }
+            while (xmlNode.firstChild) {
+                renamedNode.appendChild(xmlNode.firstChild);
+            }
+            xmlNode.parentNode.replaceChild(renamedNode, xmlNode);
+
+            invalidateIdentificationAfterManualEdit(`Zmieniono typ tagu na ${newTagName}.`);
+        }
+
+        function openTaggedElementMenu(event, taggedElement) {
+            const nodePath = taggedElement.dataset.nodePath;
+            const currentTagName = taggedElement.dataset.tagName;
+            const items = EDITABLE_TAG_TYPES
+                .filter(tagName => tagName !== currentTagName)
+                .map(tagName => ({
+                    label: `Zmień na ${tagName}`,
+                    action: () => changeXmlElementTag(nodePath, tagName),
+                }));
+
+            items.unshift({
+                label: `Usuń tag ${currentTagName}`,
+                action: () => unwrapXmlElementByPath(nodePath),
+                danger: true,
+            });
+
+            showTagContextMenu(event.clientX, event.clientY, items);
+        }
+
+        function openSelectionMenu(event) {
+            const candidate = getSelectionTagCandidate();
+            if (!candidate.valid) {
+                renderWorkflowStatus(candidate.reason);
+                return false;
+            }
+
+            const items = EDITABLE_TAG_TYPES.map(tagName => ({
+                label: `Dodaj ${tagName}`,
+                action: () => addTagToSelection(tagName),
+            }));
+
+            showTagContextMenu(event.clientX, event.clientY, items);
+            return true;
         }
 
         // uniwersalna funkcja zmiany fontu dla obu widoków
@@ -633,7 +987,23 @@ Sultan Bayazeth han, Dei gratia imperator Graeciae, Asiae atque Europae et mariu
             if (event.target == modal) {
                 toggleHelp(false);
             }
+            if (!event.target.closest('#tagContextMenu')) {
+                hideTagContextMenu();
+            }
         }
+
+        document.getElementById('textPreview').addEventListener('contextmenu', function(event) {
+            const taggedElement = event.target.closest('.tei-tag');
+            if (taggedElement) {
+                event.preventDefault();
+                openTaggedElementMenu(event, taggedElement);
+                return;
+            }
+
+            if (openSelectionMenu(event)) {
+                event.preventDefault();
+            }
+        });
 
     </script>
 </body>
