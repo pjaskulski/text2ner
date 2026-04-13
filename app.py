@@ -52,6 +52,44 @@ TEI_FOOTER = """
 
 
 # -------------------------------- FUNCTIONS ----------------------------------
+def compress_inline_tags(xml_text):
+    """Usuwa zbędne odstępy wewnątrz krótkich tagów inline TEI."""
+    return re.sub(
+        r'<(persName|placeName|orgName|date|roleName)(.*?)>\s*(.*?)\s*</\1>',
+        r'<\1\2>\3</\1>',
+        xml_text,
+        flags=re.DOTALL,
+    )
+
+
+def serialize_inner_xml(soup):
+    """Serializuje roboczy XML dokumentu do postaci gotowej do osadzenia w TEI."""
+    inner_xml = soup.prettify(formatter="minimal")
+    inner_xml = compress_inline_tags(inner_xml)
+    inner_xml = re.sub(r'<\?xml.*?\?>', '', inner_xml).strip()
+    return inner_xml
+
+
+def build_full_tei_xml(inner_xml):
+    """Składa pełny dokument TEI z wewnętrznej treści body."""
+    return f"{TEI_HEADER}\n{inner_xml}\n{TEI_FOOTER}"
+
+
+def extract_inner_xml_from_payload(xml_payload):
+    """Wyciąga zawartość sekcji body z pełnego TEI albo zwraca podany XML roboczy."""
+    xml_payload = str(xml_payload or "").strip()
+    if not xml_payload:
+        raise ValueError("Brak XML do identyfikacji.")
+
+    if "<TEI" not in xml_payload:
+        return xml_payload
+
+    body_match = re.search(r"<body>\s*(.*?)\s*</body>", xml_payload, flags=re.DOTALL)
+    if not body_match:
+        raise ValueError("Nie udało się odnaleźć sekcji <body> w przesłanym TEI-XML.")
+    return body_match.group(1).strip()
+
+
 def check_auth(username, password):
     """Sprawdza, czy nazwa użytkownika i hasło są poprawne."""
     return username == APP_USER and password == APP_PASSWORD
@@ -86,6 +124,99 @@ def get_entity_context(tag):
     return re.sub(r'\s+', ' ', raw_text).strip()
 
 
+def identify_entities_in_soup(soup, document_years):
+    """Wykonuje linking dla `persName` i `placeName` na już otagowanym XML-u."""
+    entities = []
+    unresolved_entities = []
+    seen_entities = set()
+    seen_unresolved_entities = set()
+    resolved_entity_cache = {}
+
+    tags = soup.find_all(['persName', 'placeName'])
+    for tag in tags:
+        name = tag.get_text()
+        tag_type = tag.name
+        if tag.has_attr('key'):
+            del tag['key']
+        if tag.has_attr('ref'):
+            del tag['ref']
+
+        context = get_entity_context(tag)
+        cache_key = (tag_type, normalize_whitespace(name).casefold())
+        if cache_key in resolved_entity_cache:
+            link_result = resolved_entity_cache[cache_key]
+            diagnostic_log(
+                f"Użyto cache dla encji '{name}' ({tag_type}) -> "
+                f"{link_result['decision'].get('selected_url')}"
+            )
+        else:
+            link_result = link_entity(
+                name,
+                context,
+                tag_type,
+                document_years=document_years,
+            )
+            if link_result["decision"].get("status") == "selected":
+                resolved_entity_cache[cache_key] = link_result
+
+        entity_analysis = link_result["entity_analysis"]
+        norm_name = link_result["normalized_name"]
+        decision = link_result["decision"]
+        tag['key'] = norm_name
+
+        selected_url = decision.get("selected_url")
+
+        if decision.get("status") == "selected" and selected_url:
+            tag['ref'] = selected_url
+            entity_key = (norm_name, selected_url)
+            if entity_key not in seen_entities:
+                entities.append({
+                    "name": norm_name,
+                    "surface": name,
+                    "type": tag_type,
+                    "url": selected_url,
+                })
+                seen_entities.add(entity_key)
+        else:
+            unresolved_key = (tag_type, norm_name, normalize_whitespace(name))
+            if unresolved_key not in seen_unresolved_entities:
+                unresolved_entities.append({
+                    "name": norm_name,
+                    "surface": name,
+                    "type": tag_type,
+                    "reason": decision.get("reason", "not_selected"),
+                })
+                seen_unresolved_entities.add(unresolved_key)
+
+    entities.sort(key=lambda x: x['name'])
+    unresolved_entities.sort(key=lambda x: (x['type'], x['name'], x['surface']))
+    return entities, unresolved_entities
+
+
+def recognize_text_to_tei(raw_text):
+    """Rozpoznaje encje i zwraca pełny TEI-XML bez identyfikacji referencyjnej."""
+    tagged_xml = tag_entities_with_gemini(raw_text)
+    if tagged_xml is None:
+        raise ValueError("Błąd tagowania tekstu przez model Gemini. Sprawdź połączenie lub klucz API.")
+
+    soup = BeautifulSoup(tagged_xml, 'xml')
+    inner_xml = serialize_inner_xml(soup)
+    return build_full_tei_xml(inner_xml)
+
+
+def identify_entities_in_tei(xml_payload):
+    """Identyfikuje encje w dostarczonym TEI-XML lub XML-u roboczym."""
+    inner_xml = extract_inner_xml_from_payload(xml_payload)
+    soup = BeautifulSoup(inner_xml, 'xml')
+    document_years = extract_years_from_text(soup.get_text(" "))
+    diagnostic_log(f"Wykryte lata dokumentu dla identyfikacji: {document_years}")
+
+    entities, unresolved_entities = identify_entities_in_soup(soup, document_years)
+    normalized_inner_xml = serialize_inner_xml(soup)
+    full_tei_xml = build_full_tei_xml(normalized_inner_xml)
+    return full_tei_xml, entities, unresolved_entities
+
+
 # -------------------------------- ROUTES -------------------------------------
 @app.route('/')
 @requires_auth
@@ -93,101 +224,82 @@ def index():
     """Renderuje główny interfejs aplikacji."""
     return render_template('index.html')
 
-@app.route('/process', methods=['POST'])
+@app.route('/recognize', methods=['POST'])
 @requires_auth
-def process():
-    """Taguje tekst, linkuje encje i zwraca wynikowy dokument TEI-XML."""
+def recognize():
+    """Rozpoznaje encje i zwraca TEI-XML bez identyfikacji referencyjnej."""
     diagnostic_log_path = None
     try:
       diagnostic_log_path = start_diagnostic_session(log_dir="log")
       raw_text = request.json.get('text', '')[:5000]
-      document_years = extract_years_from_text(raw_text)
-      diagnostic_log(f"Uruchomiono /process dla tekstu o długości {len(raw_text)} znaków.")
-      diagnostic_log(f"Wykryte lata dokumentu: {document_years}")
+      diagnostic_log(f"Uruchomiono /recognize dla tekstu o długości {len(raw_text)} znaków.")
+      full_tei_xml = recognize_text_to_tei(raw_text)
 
-      # NER Tagging
-      tagged_xml = tag_entities_with_gemini(raw_text)
-      if tagged_xml is None:
-          return jsonify({"error": "Błąd tagowania tekstu przez model Gemini. Sprawdź połączenie lub klucz API."}), 500
-      
-      soup = BeautifulSoup(tagged_xml, 'xml')
+      return jsonify({
+          "xml": full_tei_xml,
+          "entities": [],
+          "unresolved_entities": [],
+          "identification_performed": False,
+          "diagnostic_log_file": diagnostic_log_path
+      })
+    
+    except Exception as e:
+        diagnostic_log(f"Błąd krytyczny w /recognize: {e}")
+        print(f"Błąd krytyczny w /recognize: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        stop_diagnostic_session()
 
-      entities = []
-      unresolved_entities = []
-      seen_entities = set()  # zbiór do śledzenia unikalnych linków
-      seen_unresolved_entities = set()
-      resolved_entity_cache = {}
 
-      # Entity Linking
-      tags = soup.find_all(['persName', 'placeName'])
-      for tag in tags:
-          name = tag.get_text()
-          tag_type = tag.name
+@app.route('/identify', methods=['POST'])
+@requires_auth
+def identify():
+    """Identyfikuje `persName` i `placeName` w istniejącym TEI-XML."""
+    diagnostic_log_path = None
+    try:
+      diagnostic_log_path = start_diagnostic_session(log_dir="log")
+      xml_payload = request.json.get('xml', '')
+      diagnostic_log(f"Uruchomiono /identify dla XML o długości {len(xml_payload)} znaków.")
 
-          context = get_entity_context(tag)
-          cache_key = (tag_type, normalize_whitespace(name).casefold())
-          if cache_key in resolved_entity_cache:
-              link_result = resolved_entity_cache[cache_key]
-              diagnostic_log(
-                  f"Użyto cache dla encji '{name}' ({tag_type}) -> "
-                  f"{link_result['decision'].get('selected_url')}"
-              )
-          else:
-              link_result = link_entity(
-                  name,
-                  context,
-                  tag_type,
-                  document_years=document_years,
-              )
-              if link_result["decision"].get("status") == "selected":
-                  resolved_entity_cache[cache_key] = link_result
-
-          entity_analysis = link_result["entity_analysis"]
-          norm_name = link_result["normalized_name"]
-          decision = link_result["decision"]
-          tag['key'] = norm_name
-
-          selected_url = decision.get("selected_url")
-
-          if decision.get("status") == "selected" and selected_url:
-              tag['ref'] = selected_url
-
-              # KLUCZ UNIKALNOŚCI: Nazwa + URL
-              entity_key = (norm_name, selected_url)
-              if entity_key not in seen_entities:
-                  entities.append({"name": norm_name,
-                                 "surface": name,
-                                 "type": tag_type,
-                                  "url": selected_url
-                  })
-                  seen_entities.add(entity_key)
-          else:
-              unresolved_key = (tag_type, norm_name, normalize_whitespace(name))
-              if unresolved_key not in seen_unresolved_entities:
-                  unresolved_entities.append({
-                      "name": norm_name,
-                      "surface": name,
-                      "type": tag_type,
-                      "reason": decision.get("reason", "not_selected"),
-                  })
-                  seen_unresolved_entities.add(unresolved_key)
-
-      inner_xml = soup.prettify(formatter="minimal")
-      inner_xml = re.sub(r'<(persName|placeName)(.*?)>\s*(.*?)\s*</\1>', r'<\1\2>\3</\1>', inner_xml, flags=re.DOTALL)
-      inner_xml = re.sub(r'<\?xml.*?\?>', '', inner_xml).strip()
-
-      full_tei_xml = f"{TEI_HEADER}\n{inner_xml}\n{TEI_FOOTER}"
-
-      entities.sort(key=lambda x: x['name'])
-      unresolved_entities.sort(key=lambda x: (x['type'], x['name'], x['surface']))
+      full_tei_xml, entities, unresolved_entities = identify_entities_in_tei(xml_payload)
 
       return jsonify({
           "xml": full_tei_xml,
           "entities": entities,
           "unresolved_entities": unresolved_entities,
+          "identification_performed": True,
           "diagnostic_log_file": diagnostic_log_path
       })
-    
+
+    except Exception as e:
+        diagnostic_log(f"Błąd krytyczny w /identify: {e}")
+        print(f"Błąd krytyczny w /identify: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        stop_diagnostic_session()
+
+
+@app.route('/process', methods=['POST'])
+@requires_auth
+def process():
+    """Zachowuje zgodność wsteczną: rozpoznaje i od razu identyfikuje encje."""
+    diagnostic_log_path = None
+    try:
+      diagnostic_log_path = start_diagnostic_session(log_dir="log")
+      raw_text = request.json.get('text', '')[:5000]
+      diagnostic_log(f"Uruchomiono /process dla tekstu o długości {len(raw_text)} znaków.")
+
+      full_tei_xml = recognize_text_to_tei(raw_text)
+      full_tei_xml, entities, unresolved_entities = identify_entities_in_tei(full_tei_xml)
+
+      return jsonify({
+          "xml": full_tei_xml,
+          "entities": entities,
+          "unresolved_entities": unresolved_entities,
+          "identification_performed": True,
+          "diagnostic_log_file": diagnostic_log_path
+      })
+
     except Exception as e:
         diagnostic_log(f"Błąd krytyczny w /process: {e}")
         print(f"Błąd krytyczny w /process: {e}")

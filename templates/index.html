@@ -24,12 +24,45 @@
             padding: 0 2px;
         }
 
+        .entity-date {
+            background-color: #dcfce7;
+            border-bottom: 2px solid #16a34a;
+            cursor: help;
+            padding: 0 2px;
+        }
+
+        .entity-role {
+            background-color: #fce7f3;
+            border-bottom: 2px solid #db2777;
+            cursor: help;
+            padding: 0 2px;
+        }
+
+        .entity-org {
+            background-color: #ede9fe;
+            border-bottom: 2px solid #7c3aed;
+            cursor: help;
+            padding: 0 2px;
+        }
+
         .entity-pers:hover {
             background-color: #c7d2fe;
         }
 
         .entity-place:hover {
             background-color: #fed7aa;
+        }
+
+        .entity-date:hover {
+            background-color: #bbf7d0;
+        }
+
+        .entity-role:hover {
+            background-color: #fbcfe8;
+        }
+
+        .entity-org:hover {
+            background-color: #ddd6fe;
         }
     </style>
 </head>
@@ -47,7 +80,7 @@
                     </span>
                 </div>
                 <p class="text-sm text-gray-500 font-medium mt-1">
-                    Automatyczna konwersja dokumentów historycznych do formatu TEI-XML z identyfikacją encji<br>
+                    Automatyczna konwersja dokumentów historycznych do formatu TEI-XML z identyfikacją encji, dat, funkcji i instytucji<br>
                     <small>(mechanizm dostosowany do źródeł z XIV - XVI wieku w języku łacińskim, polskim, niemieckim,<br> 
                         wykorzystuje zewnętrzne bazy referencyjne oraz model językowy dlatego analiza może trwać nawet kilka minut)</small>
                 </p>
@@ -89,10 +122,17 @@
             </div>
 
             <div class="mt-3 flex gap-2">
-                <button onclick="analyze()" id="btnAnalyze"
+                <button onclick="recognizeEntities()" id="btnRecognize"
                     class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition flex items-center">
-                    <span id="btnText">Analizuj tekst</span>
-                    <div id="spinner"
+                    <span id="btnRecognizeText">Rozpoznaj encje</span>
+                    <div id="spinnerRecognize"
+                        class="hidden ml-2 w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin">
+                    </div>
+                </button>
+                <button onclick="identifyEntities()" id="btnIdentify" disabled
+                    class="bg-emerald-600 text-white px-6 py-2 rounded-lg hover:bg-emerald-700 transition flex items-center disabled:bg-gray-300 disabled:text-gray-600 disabled:cursor-not-allowed">
+                    <span id="btnIdentifyText">Identyfikuj encje</span>
+                    <div id="spinnerIdentify"
                         class="hidden ml-2 w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin">
                     </div>
                 </button>
@@ -156,6 +196,8 @@
                 <div id="unresolvedEntitySummary" class="hidden text-sm text-gray-500 mb-3"></div>
                 <div id="unresolvedEntityList" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
             </div>
+
+            <div id="workflowStatus" class="text-sm text-gray-500"></div>
         </div>
     </div>
 
@@ -186,8 +228,7 @@
                         <span class="bg-blue-100 w-6 h-6 rounded-full flex items-center justify-center text-xs">2</span>
                         Analiza
                     </h4>
-                <p>Kliknij <strong>"Analizuj tekst"</strong>. System automatycznie
-                        przekonwertuje tekst na format TEI-XML i wyszuka encje w bazach Wikidata, WikiHum, va.wiki.kul.pl i GeoNames.</p>
+                <p>Kliknij najpierw <strong>"Rozpoznaj encje"</strong>, aby utworzyć TEI-XML z tagami. Jeśli potrzebujesz także identyfikacji referencyjnej osób i miejsc, uruchom następnie <strong>"Identyfikuj encje"</strong>.</p>
                 </section>
 
                 <section class="bg-blue-50 p-4 rounded-lg border border-blue-100">
@@ -195,7 +236,7 @@
                     <ul class="list-disc ml-5 space-y-1">
                         <li><strong>Kod XML:</strong> Podgląd struktury TEI-XML gotowy do zapisu.</li>
                         <li><strong>Podgląd tekstu:</strong> Interaktywna lektura z dymkami (tooltips). Najedź myszą na
-                            osobę lub miejsce, by zobaczyć dane z baz zewnętrznych.</li>
+                            osobę, miejsce, datę, funkcję lub instytucję, by zobaczyć informacje pomocnicze.</li>
                     </ul>
                 </section>
 
@@ -207,6 +248,18 @@
                     <div class="flex items-center gap-2">
                         <span class="w-4 h-4 rounded bg-[#ffedd5] border-b-2 border-[#ea580c]"></span>
                         <span>Miejsca (placeName)</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="w-4 h-4 rounded bg-[#ede9fe] border-b-2 border-[#7c3aed]"></span>
+                        <span>Instytucje (orgName)</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="w-4 h-4 rounded bg-[#dcfce7] border-b-2 border-[#16a34a]"></span>
+                        <span>Daty (date)</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="w-4 h-4 rounded bg-[#fce7f3] border-b-2 border-[#db2777]"></span>
+                        <span>Funkcje (roleName)</span>
                     </div>
                 </div>
 
@@ -228,76 +281,136 @@
     </div>
 
     <script>
-        async function analyze() {
+        function setActionLoading(buttonId, spinnerId, textId, loading, idleText, loadingText) {
+            document.getElementById(buttonId).disabled = loading;
+            document.getElementById(spinnerId).classList.toggle('hidden', !loading);
+            document.getElementById(textId).innerText = loading ? loadingText : idleText;
+        }
+
+        function setIdentifyEnabled(enabled) {
+            document.getElementById('btnIdentify').disabled = !enabled;
+        }
+
+        function renderXml(xml) {
+            const xmlCode = document.getElementById('xmlOutput');
+            xmlCode.textContent = xml;
+            delete xmlCode.dataset.highlighted;
+            hljs.highlightElement(xmlCode);
+        }
+
+        function renderIdentificationLists(data) {
+            const list = document.getElementById('entityList');
+            const unresolvedEntities = data.unresolved_entities || [];
+            const unresolvedSummary = document.getElementById('unresolvedEntitySummary');
+            const unresolvedList = document.getElementById('unresolvedEntityList');
+            const identificationPerformed = Boolean(data.identification_performed);
+
+            if (!identificationPerformed) {
+                list.innerHTML = `
+                    <div class="p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-700">
+                        Rozpoznanie encji zostało zakończone. Identyfikacja referencyjna nie została jeszcze uruchomiona.
+                    </div>
+                `;
+                unresolvedSummary.classList.add('hidden');
+                unresolvedSummary.textContent = '';
+                unresolvedList.innerHTML = `
+                    <div class="p-3 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-600">
+                        Ten etap pojawi się po kliknięciu „Identyfikuj encje”.
+                    </div>
+                `;
+                return;
+            }
+
+            list.innerHTML = (data.entities || []).map(e => `
+                <div class="p-3 bg-gray-50 border rounded-lg">
+                    <span class="text-xs font-bold uppercase ${e.type === 'persName' ? 'text-purple-600' : 'text-orange-600'}">${e.type}</span>
+                    <p class="font-medium">${e.surface && e.surface !== e.name ? `${e.surface} (${e.name})` : e.name}</p>
+                    <a href="${e.url}" target="_blank" class="text-sm text-blue-500 hover:underline break-all">${e.url}</a>
+                </div>
+            `).join('');
+
+            if (unresolvedEntities.length > 0) {
+                unresolvedSummary.classList.remove('hidden');
+                unresolvedSummary.textContent = `Łącznie niezidentyfikowanych tagów: ${unresolvedEntities.length}`;
+                unresolvedList.innerHTML = unresolvedEntities.map(e => `
+                    <div class="p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                        <span class="text-xs font-bold uppercase ${e.type === 'persName' ? 'text-purple-600' : 'text-orange-600'}">${e.type}</span>
+                        <p class="font-medium text-gray-900">${e.surface && e.surface !== e.name ? `${e.surface} (${e.name})` : e.name}</p>
+                        <p class="text-sm text-gray-500">Nie przypisano identyfikatora referencyjnego.</p>
+                    </div>
+                `).join('');
+            } else {
+                unresolvedSummary.classList.add('hidden');
+                unresolvedSummary.textContent = '';
+                unresolvedList.innerHTML = `
+                    <div class="p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
+                        Wszystkie otagowane encje zostały zidentyfikowane.
+                    </div>
+                `;
+            }
+        }
+
+        function renderWorkflowStatus(message) {
+            document.getElementById('workflowStatus').textContent = message || '';
+        }
+
+        async function recognizeEntities() {
             const text = document.getElementById('inputText').value;
             if (!text) return alert("Wklej tekst!");
 
-            // reset widoku: Wymuszamy powrót do zakładki XML
             switchTab('xml');
-
-            // UI State: Loading
-            document.getElementById('btnAnalyze').disabled = true;
-            document.getElementById('spinner').classList.remove('hidden');
-            document.getElementById('btnText').innerText = "Trwa analiza...";
-
             document.getElementById('results').classList.add('hidden');
+            setIdentifyEnabled(false);
+            setActionLoading('btnRecognize', 'spinnerRecognize', 'btnRecognizeText', true, 'Rozpoznaj encje', 'Trwa rozpoznawanie...');
 
             try {
-                const response = await fetch("{{ url_for('process') }}", {
+                const response = await fetch("{{ url_for('recognize') }}", {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ text: text })
                 });
                 const data = await response.json();
+                if (!response.ok) throw new Error(data.error || "Błąd podczas rozpoznawania.");
 
-                // Display XML
-                const xmlCode = document.getElementById('xmlOutput');
-                xmlCode.textContent = data.xml;
-
-                delete xmlCode.dataset.highlighted;
-                hljs.highlightElement(xmlCode);
-
-                // Display Entities
-                const list = document.getElementById('entityList');
-                list.innerHTML = data.entities.map(e => `
-                    <div class="p-3 bg-gray-50 border rounded-lg">
-                        <span class="text-xs font-bold uppercase ${e.type === 'persName' ? 'text-purple-600' : 'text-orange-600'}">${e.type}</span>
-                        <p class="font-medium">${e.surface && e.surface !== e.name ? `${e.surface} (${e.name})` : e.name}</p>
-                        <a href="${e.url}" target="_blank" class="text-sm text-blue-500 hover:underline break-all">${e.url}</a>
-                    </div>
-                `).join('');
-
-                const unresolvedEntities = data.unresolved_entities || [];
-                const unresolvedSummary = document.getElementById('unresolvedEntitySummary');
-                const unresolvedList = document.getElementById('unresolvedEntityList');
-
-                if (unresolvedEntities.length > 0) {
-                    unresolvedSummary.classList.remove('hidden');
-                    unresolvedSummary.textContent = `Łącznie niezidentyfikowanych tagów: ${unresolvedEntities.length}`;
-                    unresolvedList.innerHTML = unresolvedEntities.map(e => `
-                        <div class="p-3 bg-amber-50 border border-amber-200 rounded-lg">
-                            <span class="text-xs font-bold uppercase ${e.type === 'persName' ? 'text-purple-600' : 'text-orange-600'}">${e.type}</span>
-                            <p class="font-medium text-gray-900">${e.surface && e.surface !== e.name ? `${e.surface} (${e.name})` : e.name}</p>
-                            <p class="text-sm text-gray-500">Nie przypisano identyfikatora referencyjnego.</p>
-                        </div>
-                    `).join('');
-                } else {
-                    unresolvedSummary.classList.add('hidden');
-                    unresolvedSummary.textContent = '';
-                    unresolvedList.innerHTML = `
-                        <div class="p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
-                            Wszystkie otagowane encje zostały zidentyfikowane.
-                        </div>
-                    `;
-                }
-
+                renderXml(data.xml);
+                renderIdentificationLists(data);
+                renderWorkflowStatus('Etap 1 zakończony: TEI-XML z rozpoznanymi encjami jest gotowy. Możesz teraz uruchomić identyfikację referencyjną.');
                 document.getElementById('results').classList.remove('hidden');
+                setIdentifyEnabled(true);
             } catch (err) {
-                alert("Błąd podczas analizy.");
+                alert(err.message || "Błąd podczas rozpoznawania.");
             } finally {
-                document.getElementById('btnAnalyze').disabled = false;
-                document.getElementById('spinner').classList.add('hidden');
-                document.getElementById('btnText').innerText = "Analizuj tekst";
+                setActionLoading('btnRecognize', 'spinnerRecognize', 'btnRecognizeText', false, 'Rozpoznaj encje', 'Trwa rozpoznawanie...');
+            }
+        }
+
+        async function identifyEntities() {
+            const xml = document.getElementById('xmlOutput').textContent;
+            if (!xml) return alert("Najpierw rozpoznaj encje.");
+
+            switchTab('xml');
+            setActionLoading('btnIdentify', 'spinnerIdentify', 'btnIdentifyText', true, 'Identyfikuj encje', 'Trwa identyfikacja...');
+            document.getElementById('btnRecognize').disabled = true;
+
+            try {
+                const response = await fetch("{{ url_for('identify') }}", {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ xml: xml })
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error || "Błąd podczas identyfikacji.");
+
+                renderXml(data.xml);
+                renderIdentificationLists(data);
+                renderWorkflowStatus('Etap 2 zakończony: encje typu persName i placeName zostały sprawdzone w bazach referencyjnych.');
+                document.getElementById('results').classList.remove('hidden');
+                setIdentifyEnabled(true);
+            } catch (err) {
+                alert(err.message || "Błąd podczas identyfikacji.");
+            } finally {
+                setActionLoading('btnIdentify', 'spinnerIdentify', 'btnIdentifyText', false, 'Identyfikuj encje', 'Trwa identyfikacja...');
+                document.getElementById('btnRecognize').disabled = false;
             }
         }
 
@@ -380,6 +493,8 @@ Sultan Bayazeth han, Dei gratia imperator Graeciae, Asiae atque Europae et mariu
             document.getElementById('unresolvedEntityList').innerHTML = '';
             document.getElementById('unresolvedEntitySummary').textContent = '';
             document.getElementById('unresolvedEntitySummary').classList.add('hidden');
+            document.getElementById('workflowStatus').textContent = '';
+            setIdentifyEnabled(false);
         }
 
         // funkcja Wyczyść
@@ -401,6 +516,11 @@ Sultan Bayazeth han, Dei gratia imperator Graeciae, Asiae atque Europae et mariu
                 counter.classList.add('text-red-500');
             } else {
                 counter.classList.remove('text-red-500');
+            }
+
+            if (document.getElementById('xmlOutput').textContent.trim()) {
+                setIdentifyEnabled(false);
+                renderWorkflowStatus('Tekst wejściowy został zmieniony. Aby pracować na nowej wersji dokumentu, uruchom ponownie rozpoznawanie encji.');
             }
         }
 
@@ -464,6 +584,16 @@ Sultan Bayazeth han, Dei gratia imperator Graeciae, Asiae atque Europae et mariu
                     const ref = node.getAttribute("ref") || "Brak identyfikatora";
                     const tooltip = `${key}\nID: ${ref}`;
                     return `<span class="${typeClass}" title="${tooltip}">${content}</span>`;
+                }
+                if (node.nodeName === "orgName") {
+                    return `<span class="entity-org" title="orgName">${content}</span>`;
+                }
+                if (node.nodeName === "date") {
+                    const when = node.getAttribute("when") || "Brak daty ISO";
+                    return `<span class="entity-date" title="when: ${when}">${content}</span>`;
+                }
+                if (node.nodeName === "roleName") {
+                    return `<span class="entity-role" title="roleName">${content}</span>`;
                 }
                 if (node.nodeName === "div") return `<div>${content}</div>`;
                 return content;

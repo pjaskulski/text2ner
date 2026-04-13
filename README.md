@@ -1,6 +1,6 @@
 # text2ner
 
-Aplikacja TEXT2NER przeznaczona jest do wstępnej konwersji dokumentów historycznych do formatu TEI-XML. Dokument w postaci zwykłego tekstu jest przekształcany na struktury xml (nagłówek head, oraz body z elementami div, p). Następnie w tekście wyszukiwane są występujące w nim nazwy własne: osoby oraz miejsca (miejscowości, kraje itp.). Aplikacja zoptymalizowana jest szczególnie do przetwarzania dokumentów historycznych w języku łacińskim, polskim, niemieckim z XIV-XVI wieku.
+Aplikacja TEXT2NER przeznaczona jest do wstępnej konwersji dokumentów historycznych do formatu TEI-XML. Dokument w postaci zwykłego tekstu jest przekształcany na struktury xml (nagłówek head, oraz body z elementami div, p). Następnie w tekście wyszukiwane są występujące w nim nazwy własne: osoby oraz miejsca (miejscowości, kraje itp.), a także daty, określenia funkcji oraz nazwy instytucji tagowane odpowiednio jako elementy `date`, `roleName` i `orgName`. Aplikacja zoptymalizowana jest szczególnie do przetwarzania dokumentów historycznych w języku łacińskim, polskim, niemieckim z XIV-XVI wieku.
 
 ## Co robi aplikacja
 
@@ -9,9 +9,18 @@ Aplikacja wykonuje dwa główne zadania:
 1. rozpoznaje w tekście encje typu `persName` i `placeName`,
 2. próbuje zlinkować każdą z nich do konkretnego rekordu w bazie wiedzy.
 
+W interfejsie WWW oba etapy są rozdzielone:
+
+1. `Rozpoznaj encje` tworzy TEI-XML z tagami, ale bez identyfikacji referencyjnej,
+2. `Identyfikuj encje` wykonuje dopiero drugi krok dla `persName` i `placeName`.
+
+Dodatkowo aplikacja taguje występujące w tekście daty jako `date`, a jeśli jest to możliwe, uzupełnia atrybut `when` z datą w postaci ISO.
+Może też oznaczać urzędy, godności i funkcje jako `roleName`, bez prób identyfikacji tych elementów w bazach referencyjnych.
+Może również oznaczać instytucje jako `orgName`, odróżniając je od rzeczywistych miejsc.
+
 W praktyce oznacza to, że z nieopracowanego tekstu źródłowego powstaje:
 
-- TEI-XML z tagami `persName` i `placeName`,
+- TEI-XML z tagami `persName`, `placeName`, `orgName`, `date` i `roleName`,
 - lista encji z rozstrzygniętym odnośnikiem `ref`,
 - lista encji, których nie udało się wiarygodnie powiązać z rekordem referencyjnym,
 - log diagnostyczny całego przebiegu przetwarzania.

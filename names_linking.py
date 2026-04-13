@@ -5,6 +5,7 @@ from contextvars import ContextVar
 from datetime import datetime
 
 import requests
+from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
@@ -55,6 +56,84 @@ ENTITY_CACHE = {}
 WIKIDATA_SITELINK_CACHE = {}
 WIKIPEDIA_LEAD_CACHE = {}
 PLWIKI_PAGE_CACHE = {}
+
+DATE_MONTH_TOKENS = {
+    "ian": 1,
+    "ianuarii": 1,
+    "ianuarius": 1,
+    "january": 1,
+    "januarii": 1,
+    "januarius": 1,
+    "januar": 1,
+    "januari": 1,
+    "stycznia": 1,
+    "feb": 2,
+    "februarii": 2,
+    "februarius": 2,
+    "february": 2,
+    "februar": 2,
+    "lutego": 2,
+    "martii": 3,
+    "martius": 3,
+    "march": 3,
+    "marzec": 3,
+    "marca": 3,
+    "april": 4,
+    "aprilis": 4,
+    "aprili": 4,
+    "kwietnia": 4,
+    "maii": 5,
+    "maius": 5,
+    "magii": 5,
+    "maja": 5,
+    "may": 5,
+    "mai": 5,
+    "iunii": 6,
+    "iunius": 6,
+    "junii": 6,
+    "junius": 6,
+    "june": 6,
+    "czerwca": 6,
+    "iulii": 7,
+    "iulius": 7,
+    "julii": 7,
+    "julius": 7,
+    "july": 7,
+    "lipca": 7,
+    "augusti": 8,
+    "augustus": 8,
+    "august": 8,
+    "sierpnia": 8,
+    "septembris": 9,
+    "september": 9,
+    "septembra": 9,
+    "wrzesnia": 9,
+    "września": 9,
+    "octobris": 10,
+    "october": 10,
+    "oktober": 10,
+    "pazdziernika": 10,
+    "października": 10,
+    "novembris": 11,
+    "november": 11,
+    "listopada": 11,
+    "decembris": 12,
+    "december": 12,
+    "grudnia": 12,
+}
+
+ORG_NAME_SIGNAL_STEMS = (
+    "ecclesi",
+    "sedes",
+    "apostolic",
+    "curi",
+    "capitul",
+    "ordo",
+    "ordinis",
+    "camera",
+    "cancellari",
+    "congregat",
+)
 
 HUMAN_TYPE_MARKERS = {
     "human", "człowiek", "czlowiek", "person", "osoba", "persona", "czlowiek"
@@ -642,6 +721,208 @@ def extract_years_from_text(text, min_year=900, max_year=1800):
         seen.add(year)
         years.append(year)
     return years
+
+
+def roman_to_int(value):
+    """Konwertuje liczbę rzymską na int albo zwraca `None`, jeśli jest błędna."""
+    roman = normalize_whitespace(value).upper()
+    if not roman or not re.fullmatch(r"[IVXLCDM]+", roman):
+        return None
+
+    values = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100, "D": 500, "M": 1000}
+    total = 0
+    previous = 0
+    for char in reversed(roman):
+        current = values[char]
+        if current < previous:
+            total -= current
+        else:
+            total += current
+            previous = current
+    return total
+
+
+def normalize_iso_date_value(value):
+    """Normalizuje datę do ISO (`YYYY`, `YYYY-MM`, `YYYY-MM-DD`) jeśli to możliwe."""
+    normalized = normalize_whitespace(value)
+    if not normalized:
+        return None
+
+    normalized = normalized.replace("/", "-").replace(".", "-")
+
+    year_only_match = re.fullmatch(r"(\d{4})", normalized)
+    if year_only_match:
+        return year_only_match.group(1)
+
+    year_month_match = re.fullmatch(r"(\d{4})-(\d{1,2})", normalized)
+    if year_month_match:
+        year = int(year_month_match.group(1))
+        month = int(year_month_match.group(2))
+        if 1 <= month <= 12:
+            return f"{year:04d}-{month:02d}"
+        return None
+
+    full_date_match = re.fullmatch(r"(\d{4})-(\d{1,2})-(\d{1,2})", normalized)
+    if full_date_match:
+        year = int(full_date_match.group(1))
+        month = int(full_date_match.group(2))
+        day = int(full_date_match.group(3))
+        try:
+            datetime(year, month, day)
+        except ValueError:
+            return None
+        return f"{year:04d}-{month:02d}-{day:02d}"
+
+    return None
+
+
+def infer_iso_date_value_from_text(text):
+    """Próbuje odczytać z tekstu datę w postaci ISO do użycia w atrybucie `when`."""
+    normalized_text = normalize_whitespace(text)
+    if not normalized_text:
+        return None
+
+    year_match = re.search(r"(?<!\d)(\d{4})(?!\d)", normalized_text)
+    if not year_match:
+        return None
+    year = int(year_match.group(1))
+
+    lowered_text = normalize_for_lookup(normalized_text)
+    month = None
+    month_pattern = None
+    for month_token, month_number in DATE_MONTH_TOKENS.items():
+        pattern = rf"\b{re.escape(month_token)}\b"
+        if re.search(pattern, lowered_text):
+            month = month_number
+            month_pattern = month_token
+            break
+
+    if month is None:
+        return f"{year:04d}"
+
+    day_match = re.search(
+        rf"\b(?P<day>\d{{1,2}}|[ivxlcdm]+)\b\s+{re.escape(month_pattern)}\b.*?(?<!\d)(?P<year>\d{{4}})(?!\d)",
+        lowered_text,
+        flags=re.IGNORECASE,
+    )
+    if day_match:
+        day_token = day_match.group("day")
+        day = int(day_token) if day_token.isdigit() else roman_to_int(day_token)
+        if day:
+            try:
+                datetime(year, month, day)
+            except ValueError:
+                return f"{year:04d}-{month:02d}"
+            return f"{year:04d}-{month:02d}-{day:02d}"
+
+    return f"{year:04d}-{month:02d}"
+
+
+def normalize_tagged_dates(tagged_xml):
+    """Waliduje i uzupełnia atrybuty `when` w tagach `date` zwróconych przez model."""
+    soup = BeautifulSoup(tagged_xml, "xml")
+    for tag in soup.find_all("date"):
+        normalized_when = normalize_iso_date_value(tag.get("when"))
+        if not normalized_when:
+            normalized_when = infer_iso_date_value_from_text(tag.get_text())
+
+        if normalized_when:
+            tag["when"] = normalized_when
+        elif tag.has_attr("when"):
+            del tag["when"]
+
+    normalized_xml = soup.prettify(formatter="minimal")
+    normalized_xml = re.sub(r"<\?xml.*?\?>", "", normalized_xml).strip()
+    return normalized_xml
+
+
+def looks_like_org_name(value):
+    """Ocena, czy fraza wygląda bardziej na instytucję niż na miejsce."""
+    normalized = normalize_for_lookup(value)
+    if not normalized:
+        return False
+    return any(stem in normalized for stem in ORG_NAME_SIGNAL_STEMS)
+
+
+def normalize_tagged_org_names(tagged_xml):
+    """Koryguje oczywiste instytucje błędnie oznaczone jako `placeName`."""
+    soup = BeautifulSoup(tagged_xml, "xml")
+    for tag in soup.find_all("placeName"):
+        tag_text = normalize_whitespace(tag.get_text())
+        if not tag_text:
+            continue
+        if looks_like_org_name(tag_text):
+            tag.name = "orgName"
+
+    normalized_xml = soup.prettify(formatter="minimal")
+    normalized_xml = re.sub(r"<\?xml.*?\?>", "", normalized_xml).strip()
+    return normalized_xml
+
+
+def cleanup_tagged_xml_output(tagged_text):
+    """Czyści odpowiedź modelu i doprowadza ją do spójnego XML-a roboczego."""
+    cleaned_text = str(tagged_text or "").strip()
+    cleaned_text = re.sub(r"^```xml|^```|```$", "", cleaned_text, flags=re.MULTILINE).strip()
+    if not cleaned_text.startswith("<div"):
+        cleaned_text = f'<div type="document">{cleaned_text}</div>'
+    cleaned_text = normalize_tagged_org_names(cleaned_text)
+    return normalize_tagged_dates(cleaned_text)
+
+
+def generate_tagged_xml_with_gemini(prompt):
+    """Uruchamia Gemini dla promptu tagującego i zwraca oczyszczony XML."""
+    http_options = types.HttpOptions(timeout=TIMEOUT_MS)
+    config = types.GenerateContentConfig(
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+        http_options=http_options,
+    )
+    response = client.models.generate_content(
+        model=MODEL,
+        contents=prompt,
+        config=config,
+    )
+    return cleanup_tagged_xml_output(response.text)
+
+
+def review_tagged_xml_with_gemini(raw_text, tagged_xml):
+    """Drugi pass korekcyjny: uzupełnia braki i poprawia mylenie miejsc z instytucjami."""
+    prompt = f"""
+Jesteś ekspertem od cyfrowej edycji tekstów historycznych, standardu TEI-XML, historykiem średniowiecza i renesansu oraz paleografem.
+Otrzymujesz oryginalny tekst oraz jego wstępnie otagowaną wersję XML. Twoim zadaniem jest poprawić ten XML, nie zmieniając ani jednego znaku oryginalnego tekstu.
+
+CELE KOREKTY:
+1. Dodaj brakujące tagi, jeśli we wstępnym XML-u pominięto oczywiste osoby, miejsca, role, instytucje lub daty.
+2. Popraw błędne klasyfikacje tagów.
+3. Zachowaj poprawne istniejące tagi i podział na akapity.
+
+DOZWOLONE TAGI:
+- <persName> dla osób
+- <placeName> dla rzeczywistych miejsc, regionów, krajów, miast i jednostek terytorialnych
+- <orgName> dla instytucji, organizacji, wspólnot i ciał kościelnych lub politycznych
+- <roleName> dla urzędów, funkcji, godności i określeń roli społecznej lub kościelnej
+- <date> dla dat; jeśli to możliwe zachowaj lub popraw atrybut when w ISO
+
+WAŻNE REGUŁY:
+1. Instytucje nie są miejscami. Frazy typu "Romane Ecclesie", "Ecclesia Romana", "Sedes Apostolica", "Curia Romana", "Ordo Theutonicus", "Capitulum Cracoviense" powinny być <orgName>, a nie <placeName>.
+2. Jeśli przymiotnik miejscowy jest częścią urzędu albo instytucji, nie wydzielaj go osobno jako <placeName>.
+   Przykład: <roleName>episcopus Poznaniensis</roleName>.
+3. Jeśli w tekście występuje rzeczywiste miejsce użyte samodzielnie, wtedy oznacz je jako <placeName>.
+4. Nie zgaduj. Jeśli wyrażenie nie jest dość pewne, zostaw je bez tagu.
+5. Zwróć tylko pełny poprawiony XML wewnątrz <div type="document">.
+
+ORYGINALNY TEKST:
+---
+{raw_text}
+---
+
+WSTĘPNY XML:
+---
+{tagged_xml}
+---
+
+Zwróć TYLKO poprawiony XML.
+    """
+    return generate_tagged_xml_with_gemini(prompt)
 
 
 def normalize_form_analysis(name, tag_type, analysis):
@@ -2236,14 +2517,14 @@ def analyze_form_with_gemini(name, context, tag_type, document_years=None):
     typ_encji = "postać historyczna" if tag_type == "persName" else "miejsce / kraj / region"
 
     prompt = f"""
-Jesteś historykiem i filologiem klasycznym. Analizujesz dokument historyczny z lat 1300-1600, zwykle po łacinie, polsku, niemiecku.
+Jesteś historykiem średniowiecza i renesansu oraz filologiem klasycznym. Analizujesz dokument historyczny z lat 1300-1600, zwykle po łacinie, polsku, niemiecku.
 W tekście występuje encja typu {typ_encji} zapisana jako: "{name}".
 Kontekst: "{context}"
 
 Twoim zadaniem NIE jest końcowa identyfikacja encji. Masz przygotować prostą analizę do wyszukiwania w bazach referencyjnych.
 
 ZASADY:
-1. Możesz znormalizować nazwę do mianownika, ale tylko ostrożnie.
+1. Możesz znormalizować nazwę do mianownika, ale ostrożnie.
 2. Nie zgaduj pełnej tożsamości encyklopedycznej.
 3. Wypisz tylko te wskazówki kontekstowe, które naprawdę wynikają z tekstu.
 4. Dla osób wydziel funkcje, urzędy, relacje, daty i miejsca związane z osobą.
@@ -2597,26 +2878,40 @@ def link_entity(name, context, tag_type, document_years=None):
 # ---------------------------------- NER --------------------------------------
 def tag_entities_with_gemini(raw_text):
     """
-    Wykorzystuje Gemini do rozpoznania osób i miejsc w surowym tekście
-    i otagowania ich zgodnie ze standardem TEI (persName, placeName).
+    Wykorzystuje Gemini do rozpoznania osób, miejsc, dat, funkcji i instytucji w tekście
+    i otagowania ich zgodnie ze standardem TEI.
     """
     prompt = f"""
-Jesteś ekspertem od cyfrowej edycji tekstów historycznych, standardu TEI-XML i paleografem.
-Twoim zadaniem jest rozpoznanie nazw osób (postaci historycznych) oraz nazw geograficznych (miejscowości, krain, regionów) w poniższym tekście łacińskiego (lub polskego, niemieckiego) dokumentu historycznego oraz ich otagowanie.
+Jesteś ekspertem od cyfrowej edycji tekstów historycznych, standardu TEI-XML, historykiem średniowiecza i renesansu oraz paleografem.
+Twoim zadaniem jest rozpoznanie nazw osób (postaci historycznych), nazw geograficznych (miejscowości, krain, regionów), dat, określeń urzędów i funkcji oraz nazw instytucji w poniższym tekście łacińskiego (lub polskego, niemieckiego) dokumentu historycznego oraz ich otagowanie.
 
 ZASADY TAGOWANIA:
 1. Użyj znacznika <persName> dla osób. Zwróć szczególną uwagę na średniowieczne zapisy nazw gdzie czasem nie występują nazwiska
-   lecz zapis: Jan ze Żnina, Otto von Stamburg itp. - to są pełne nazwy osób, nie należy tagować osobno miejscowości lecz
+   lecz zapis: Jan ze Żnina, Otto von Stamburg, Gijon de Stalieri itp. - to są pełne nazwy osób, nie należy tagować osobno miejscowości lecz
    całość jako osobę: <persName>Jan ze Żnina</persName>. Niekiedy będą to być też same imiona osób np. 'Bartolomeo' albo same nazwiska np. 'Potocki'.
 2. Użyj znacznika <placeName> dla miejsc.
 2a. Jeśli nazwa miejscowa występuje tylko jako przymiotnik lub element tytułu/urzędu osoby, nie taguj jej osobno jako <placeName>.
     Przykład: "episcopus Poznaniensis" to opis urzędu osoby, a nie samodzielne wskazanie miejsca do otagowania.
 2b. Jeśli nazwa miejscowa występuje w nagłówku np. listu, lub w podpisie, np. "Praga, 1 iulii 1393" albo "Datum Mediolani",
     to również musi zostać otagowana jako <placeName>.
-3. NIE zmieniaj ani jednego znaku w oryginalnym tekście (zachowaj pisownię, interpunkcję, wielkość liter).
-4. Całość umieść wewnątrz tagu <div type="document">.
-5. Uwzględnij podział tekstu na akapity, używając znacznika <p>.
-6. Otaguj tylko te nazwy, które faktycznie występują w tekście.
+3. Użyj znacznika <orgName> dla instytucji, organizacji, wspólnot i ciał kościelnych lub politycznych.
+3a. Frazy typu "Romane Ecclesie", "Ecclesia Romana", "Sedes Apostolica", "Curia Romana", "Ordo Theutonicus" powinny być oznaczane jako <orgName>, a nie <placeName>.
+3b. Jeśli nazwa miejsca jest tylko częścią nazwy instytucji, nie taguj jej osobno jako <placeName>.
+4. Użyj znacznika <roleName> dla urzędów, funkcji, godności i określeń roli społecznej lub kościelnej.
+4a. Jeśli urząd lub funkcja tworzy spójną frazę, oznacz całość, np. <roleName>canonico Neapolitano</roleName> albo <roleName>cardinalis</roleName>.
+4b. Jeśli w obrębie <roleName> występuje przymiotnik miejscowy lub nazwa miejsca będąca częścią tytułu, nie taguj jej osobno jako <placeName>.
+    Przykład: <roleName>episcopus Poznaniensis</roleName>, a nie osobne <placeName>Poznaniensis</placeName>.
+5. Użyj znacznika <date> dla dat, jeśli w tekście rzeczywiście występuje zapis daty.
+5a. Jeśli można bezpiecznie znormalizować datę, dodaj atrybut when w formacie ISO:
+    - pełna data: <date when="1446-07-04">4 iulii 1446</date>
+    - rok i miesiąc: <date when="1446-07">iulii 1446</date>
+    - sam rok: <date when="1446">1446</date>
+5b. Jeśli data jest zbyt niejednoznaczna, nadal możesz użyć <date>, ale bez atrybutu when.
+5c. Nie twórz daty z samych liczb porządkowych, numerów dokumentu lub innych liczb, które nie są rzeczywistą datą.
+6. NIE zmieniaj ani jednego znaku w oryginalnym tekście (zachowaj pisownię, interpunkcję, wielkość liter).
+7. Całość umieść wewnątrz tagu <div type="document">.
+8. Uwzględnij podział tekstu na akapity, używając znacznika <p>.
+9. Otaguj tylko te osoby, miejsca, instytucje, role i daty, które faktycznie występują w tekście.
 
 Tekst do analizy:
 ---
@@ -2626,23 +2921,15 @@ Tekst do analizy:
 Zwróć TYLKO wynikowy kod XML. Nie dodawaj komentarzy ani wyjaśnień.
     """
     try:
-        http_options = types.HttpOptions(timeout=TIMEOUT_MS)
-        config = types.GenerateContentConfig(
-            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-            http_options=http_options,
-        )
-
-        response = client.models.generate_content(
-            model=MODEL,
-            contents=prompt,
-            config=config,
-        )
-
-        tagged_text = response.text.strip()
-        tagged_text = re.sub(r"^```xml|```$", "", tagged_text).strip()
-        if not tagged_text.startswith("<div"):
-            tagged_text = f'<div type="document">{tagged_text}</div>'
-        return tagged_text
+        first_pass_xml = generate_tagged_xml_with_gemini(prompt)
+        diagnostic_log("Pierwszy pass tagowania XML zakończony.")
+        try:
+            reviewed_xml = review_tagged_xml_with_gemini(raw_text, first_pass_xml)
+            diagnostic_log("Drugi pass korekcyjny tagowania XML zakończony.")
+            return reviewed_xml
+        except Exception as review_exc:
+            diagnostic_log(f"Drugi pass korekcyjny nie powiódł się: {review_exc}")
+            return first_pass_xml
     except Exception as exc:
         print(f"Błąd tagowania Gemini: {exc}")
         return None
