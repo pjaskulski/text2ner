@@ -295,6 +295,7 @@
         let currentXmlDoc = null;
         let currentXmlHasDeclaration = true;
         let currentIdentificationPerformed = false;
+        let currentResultTab = 'xml';
 
         function parseXmlDocument(xml) {
             const parser = new DOMParser();
@@ -520,11 +521,54 @@
             document.getElementById('workflowStatus').textContent = message || '';
         }
 
+        async function parseApiResponse(response, actionLabel) {
+            const responseText = await response.text();
+            const contentType = (response.headers.get('content-type') || '').toLowerCase();
+            const looksLikeJson = contentType.includes('application/json')
+                || responseText.trim().startsWith('{')
+                || responseText.trim().startsWith('[');
+
+            let data = null;
+            if (looksLikeJson && responseText) {
+                try {
+                    data = JSON.parse(responseText);
+                } catch (parseError) {
+                    throw new Error(`Serwer zwrócił niepoprawny JSON dla operacji „${actionLabel}”.`);
+                }
+            }
+
+            if (response.ok) {
+                if (data) {
+                    return data;
+                }
+                throw new Error(`Serwer zwrócił pustą lub nieoczekiwaną odpowiedź dla operacji „${actionLabel}”.`);
+            }
+
+            if (data && data.error) {
+                throw new Error(data.error);
+            }
+
+            if (response.status === 502 || response.status === 504) {
+                throw new Error(
+                    `Serwer pośredniczący przerwał operację „${actionLabel}” z powodu przekroczonego czasu oczekiwania (HTTP ${response.status}).`
+                );
+            }
+
+            if (contentType.includes('text/html')) {
+                throw new Error(
+                    `Serwer zwrócił stronę błędu HTML zamiast odpowiedzi JSON podczas operacji „${actionLabel}” (HTTP ${response.status}).`
+                );
+            }
+
+            throw new Error(
+                `Operacja „${actionLabel}” nie powiodła się (HTTP ${response.status}).`
+            );
+        }
+
         async function recognizeEntities() {
             const text = document.getElementById('inputText').value;
             if (!text) return alert("Wklej tekst!");
 
-            switchTab('xml');
             document.getElementById('results').classList.add('hidden');
             setIdentifyEnabled(false);
             setActionLoading('btnRecognize', 'spinnerRecognize', 'btnRecognizeText', true, 'Rozpoznaj encje', 'Trwa rozpoznawanie...');
@@ -535,14 +579,14 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ text: text })
                 });
-                const data = await response.json();
-                if (!response.ok) throw new Error(data.error || "Błąd podczas rozpoznawania.");
+                const data = await parseApiResponse(response, 'rozpoznawanie encji');
 
                 renderXml(data.xml);
                 currentIdentificationPerformed = false;
                 renderIdentificationLists(data);
                 renderWorkflowStatus('Etap 1 zakończony: TEI-XML z rozpoznanymi encjami jest gotowy. Możesz teraz uruchomić identyfikację referencyjną.');
                 document.getElementById('results').classList.remove('hidden');
+                switchTab(currentResultTab);
                 setIdentifyEnabled(true);
             } catch (err) {
                 alert(err.message || "Błąd podczas rozpoznawania.");
@@ -555,7 +599,6 @@
             const xml = document.getElementById('xmlOutput').textContent;
             if (!xml) return alert("Najpierw rozpoznaj encje.");
 
-            switchTab('xml');
             setActionLoading('btnIdentify', 'spinnerIdentify', 'btnIdentifyText', true, 'Identyfikuj encje', 'Trwa identyfikacja...');
             document.getElementById('btnRecognize').disabled = true;
 
@@ -565,14 +608,14 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ xml: xml })
                 });
-                const data = await response.json();
-                if (!response.ok) throw new Error(data.error || "Błąd podczas identyfikacji.");
+                const data = await parseApiResponse(response, 'identyfikacja encji');
 
                 renderXml(data.xml);
                 currentIdentificationPerformed = true;
                 renderIdentificationLists(data);
                 renderWorkflowStatus('Etap 2 zakończony: encje typu persName i placeName zostały sprawdzone w bazach referencyjnych.');
                 document.getElementById('results').classList.remove('hidden');
+                switchTab(currentResultTab);
                 setIdentifyEnabled(true);
             } catch (err) {
                 alert(err.message || "Błąd podczas identyfikacji.");
@@ -708,6 +751,7 @@ Sultan Bayazeth han, Dei gratia imperator Graeciae, Asiae atque Europae et mariu
         }
 
         function switchTab(tab) {
+            currentResultTab = tab;
             const xmlCont = document.getElementById('xml-container');
             const prevCont = document.getElementById('preview-container');
             const tabXml = document.getElementById('tab-xml');
