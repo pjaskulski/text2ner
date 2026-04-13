@@ -8,10 +8,16 @@ from google import genai
 from google.genai import types
 from dotenv import load_dotenv
 from names_linking import (
+    DEFAULT_ENABLED_TAG_TYPES,
+    DEFAULT_GEMINI_MODEL,
     diagnostic_log,
     extract_years_from_text,
     link_entity,
+    normalize_gemini_model_name,
+    normalize_enabled_tag_types,
     normalize_whitespace,
+    reset_current_gemini_model,
+    set_current_gemini_model,
     start_diagnostic_session,
     stop_diagnostic_session,
     tag_entities_with_gemini,
@@ -29,7 +35,6 @@ APP_PASSWORD = os.environ.get('APP_PASSWORD')
 APP_USER = os.environ.get('APP_USER')
 
 client = genai.Client(api_key=GEMINI_API_KEY)
-MODEL = 'gemini-3.1-flash-lite-preview'
 
 # szablon nagłówka dokumentu TEI
 TEI_HEADER = """<?xml version="1.0" encoding="UTF-8"?>
@@ -193,9 +198,9 @@ def identify_entities_in_soup(soup, document_years):
     return entities, unresolved_entities
 
 
-def recognize_text_to_tei(raw_text):
+def recognize_text_to_tei(raw_text, enabled_tag_types=None):
     """Rozpoznaje encje i zwraca pełny TEI-XML bez identyfikacji referencyjnej."""
-    tagged_xml = tag_entities_with_gemini(raw_text)
+    tagged_xml = tag_entities_with_gemini(raw_text, enabled_tag_types=enabled_tag_types)
     if tagged_xml is None:
         raise ValueError("Błąd tagowania tekstu przez model Gemini. Sprawdź połączenie lub klucz API.")
 
@@ -229,17 +234,31 @@ def index():
 def recognize():
     """Rozpoznaje encje i zwraca TEI-XML bez identyfikacji referencyjnej."""
     diagnostic_log_path = None
+    model_token = None
     try:
       diagnostic_log_path = start_diagnostic_session(log_dir="log")
       raw_text = request.json.get('text', '')[:5000]
+      enabled_tag_types = normalize_enabled_tag_types(
+          request.json.get('tag_types', list(DEFAULT_ENABLED_TAG_TYPES))
+      )
+      selected_model = normalize_gemini_model_name(
+          request.json.get('model_name', DEFAULT_GEMINI_MODEL)
+      )
+      model_token = set_current_gemini_model(selected_model)
+      if not enabled_tag_types:
+          raise ValueError("Wybierz co najmniej jeden typ tagu do rozpoznawania encji.")
       diagnostic_log(f"Uruchomiono /recognize dla tekstu o długości {len(raw_text)} znaków.")
-      full_tei_xml = recognize_text_to_tei(raw_text)
+      diagnostic_log(f"Włączone tagi rozpoznawania: {enabled_tag_types}")
+      diagnostic_log(f"Model Gemini dla /recognize: {selected_model}")
+      full_tei_xml = recognize_text_to_tei(raw_text, enabled_tag_types=enabled_tag_types)
 
       return jsonify({
           "xml": full_tei_xml,
           "entities": [],
           "unresolved_entities": [],
           "identification_performed": False,
+          "model_name": selected_model,
+          "recognized_tag_types": enabled_tag_types,
           "diagnostic_log_file": diagnostic_log_path
       })
     
@@ -248,6 +267,7 @@ def recognize():
         print(f"Błąd krytyczny w /recognize: {e}")
         return jsonify({"error": str(e)}), 500
     finally:
+        reset_current_gemini_model(model_token)
         stop_diagnostic_session()
 
 
@@ -256,10 +276,16 @@ def recognize():
 def identify():
     """Identyfikuje `persName` i `placeName` w istniejącym TEI-XML."""
     diagnostic_log_path = None
+    model_token = None
     try:
       diagnostic_log_path = start_diagnostic_session(log_dir="log")
       xml_payload = request.json.get('xml', '')
+      selected_model = normalize_gemini_model_name(
+          request.json.get('model_name', DEFAULT_GEMINI_MODEL)
+      )
+      model_token = set_current_gemini_model(selected_model)
       diagnostic_log(f"Uruchomiono /identify dla XML o długości {len(xml_payload)} znaków.")
+      diagnostic_log(f"Model Gemini dla /identify: {selected_model}")
 
       full_tei_xml, entities, unresolved_entities = identify_entities_in_tei(xml_payload)
 
@@ -268,6 +294,7 @@ def identify():
           "entities": entities,
           "unresolved_entities": unresolved_entities,
           "identification_performed": True,
+          "model_name": selected_model,
           "diagnostic_log_file": diagnostic_log_path
       })
 
@@ -276,6 +303,7 @@ def identify():
         print(f"Błąd krytyczny w /identify: {e}")
         return jsonify({"error": str(e)}), 500
     finally:
+        reset_current_gemini_model(model_token)
         stop_diagnostic_session()
 
 
@@ -284,12 +312,24 @@ def identify():
 def process():
     """Zachowuje zgodność wsteczną: rozpoznaje i od razu identyfikuje encje."""
     diagnostic_log_path = None
+    model_token = None
     try:
       diagnostic_log_path = start_diagnostic_session(log_dir="log")
       raw_text = request.json.get('text', '')[:5000]
+      enabled_tag_types = normalize_enabled_tag_types(
+          request.json.get('tag_types', list(DEFAULT_ENABLED_TAG_TYPES))
+      )
+      selected_model = normalize_gemini_model_name(
+          request.json.get('model_name', DEFAULT_GEMINI_MODEL)
+      )
+      model_token = set_current_gemini_model(selected_model)
+      if not enabled_tag_types:
+          raise ValueError("Wybierz co najmniej jeden typ tagu do rozpoznawania encji.")
       diagnostic_log(f"Uruchomiono /process dla tekstu o długości {len(raw_text)} znaków.")
+      diagnostic_log(f"Włączone tagi rozpoznawania w /process: {enabled_tag_types}")
+      diagnostic_log(f"Model Gemini dla /process: {selected_model}")
 
-      full_tei_xml = recognize_text_to_tei(raw_text)
+      full_tei_xml = recognize_text_to_tei(raw_text, enabled_tag_types=enabled_tag_types)
       full_tei_xml, entities, unresolved_entities = identify_entities_in_tei(full_tei_xml)
 
       return jsonify({
@@ -297,6 +337,7 @@ def process():
           "entities": entities,
           "unresolved_entities": unresolved_entities,
           "identification_performed": True,
+          "model_name": selected_model,
           "diagnostic_log_file": diagnostic_log_path
       })
 
@@ -305,6 +346,7 @@ def process():
         print(f"Błąd krytyczny w /process: {e}")
         return jsonify({"error": str(e)}), 500
     finally:
+        reset_current_gemini_model(model_token)
         stop_diagnostic_session()
 
 

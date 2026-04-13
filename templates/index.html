@@ -90,12 +90,25 @@
                 </p>
             </div>
 
-            <button onclick="toggleHelp(true)" class="flex items-center gap-2 px-4 py-2 bg-green-600 text-white text-xs font-bold rounded-lg hover:bg-green-700 transition-colors shadow-sm">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                HELP
-            </button>
+            <div class="flex items-center gap-2">
+                <button onclick="toggleSettings(true)"
+                    class="flex items-center gap-2 px-4 py-2 bg-slate-600 text-white text-xs font-bold rounded-lg hover:bg-slate-700 transition-colors shadow-sm">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24"
+                        stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M10.325 4.317a1 1 0 011.35-.936l1.89.945a1 1 0 00.894 0l1.89-.945a1 1 0 011.35.936l.214 2.102a1 1 0 00.592.82l1.932.869a1 1 0 01.386 1.608l-1.33 1.64a1 1 0 000 1.26l1.33 1.64a1 1 0 01-.386 1.608l-1.932.869a1 1 0 00-.592.82l-.214 2.102a1 1 0 01-1.35.936l-1.89-.945a1 1 0 00-.894 0l-1.89.945a1 1 0 01-1.35-.936l-.214-2.102a1 1 0 00-.592-.82l-1.932-.869a1 1 0 01-.386-1.608l1.33-1.64a1 1 0 000-1.26l-1.33-1.64a1 1 0 01.386-1.608l1.932-.869a1 1 0 00.592-.82l.214-2.102z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                    Parametry
+                </button>
+                <button onclick="toggleHelp(true)" class="flex items-center gap-2 px-4 py-2 bg-green-600 text-white text-xs font-bold rounded-lg hover:bg-green-700 transition-colors shadow-sm">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    HELP
+                </button>
+            </div>
         </header>
 
         <div class="mb-6">
@@ -210,6 +223,86 @@
         <div id="tagContextMenuItems"></div>
     </div>
 
+    <div id="settingsModal"
+        class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+        <div class="bg-white rounded-xl shadow-2xl max-w-xl w-full">
+            <div class="p-6 border-b flex justify-between items-center">
+                <div>
+                    <h3 class="text-xl font-bold text-gray-900">Parametry rozpoznawania</h3>
+                    <p class="text-sm text-gray-500 mt-1">Ustaw typy tagów i model używany w kolejnych operacjach analizy.</p>
+                </div>
+                <button onclick="toggleSettings(false)" class="text-gray-400 hover:text-gray-600">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
+                        stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+            <div class="p-6 space-y-4">
+                <div>
+                    <h4 class="text-sm font-semibold text-gray-800 mb-2">Typy tagów rozpoznawania</h4>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <label class="flex items-start gap-2 p-2.5 border rounded-lg hover:bg-gray-50">
+                        <input id="tag-toggle-persName" type="checkbox" class="mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                        <span>
+                            <span class="block font-medium text-gray-900 text-sm leading-tight">Osoby</span>
+                            <span class="block text-sm text-gray-500">Tag <code>persName</code></span>
+                        </span>
+                    </label>
+                    <label class="flex items-start gap-2 p-2.5 border rounded-lg hover:bg-gray-50">
+                        <input id="tag-toggle-placeName" type="checkbox" class="mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                        <span>
+                            <span class="block font-medium text-gray-900 text-sm leading-tight">Miejsca</span>
+                            <span class="block text-sm text-gray-500">Tag <code>placeName</code></span>
+                        </span>
+                    </label>
+                    <label class="flex items-start gap-2 p-2.5 border rounded-lg hover:bg-gray-50">
+                        <input id="tag-toggle-date" type="checkbox" class="mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                        <span>
+                            <span class="block font-medium text-gray-900 text-sm leading-tight">Daty</span>
+                            <span class="block text-sm text-gray-500">Tag <code>date</code></span>
+                        </span>
+                    </label>
+                    <label class="flex items-start gap-2 p-2.5 border rounded-lg hover:bg-gray-50">
+                        <input id="tag-toggle-roleName" type="checkbox" class="mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                        <span>
+                            <span class="block font-medium text-gray-900 text-sm leading-tight">Funkcje i urzędy</span>
+                            <span class="block text-sm text-gray-500">Tag <code>roleName</code></span>
+                        </span>
+                    </label>
+                    <label class="flex items-start gap-2 p-2.5 border rounded-lg hover:bg-gray-50 sm:col-span-2">
+                        <input id="tag-toggle-orgName" type="checkbox" class="mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                        <span>
+                            <span class="block font-medium text-gray-900 text-sm leading-tight">Instytucje</span>
+                            <span class="block text-sm text-gray-500">Tag <code>orgName</code></span>
+                        </span>
+                    </label>
+                    </div>
+                </div>
+                <div>
+                    <label for="modelSelect" class="block text-sm font-semibold text-gray-800 mb-2">Model Gemini</label>
+                    <select id="modelSelect"
+                        class="w-full p-2.5 border rounded-lg bg-gray-50 text-sm outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="gemini-3.1-flash-lite-preview">Gemini 3.1 Flash Lite Preview</option>
+                        <option value="gemini-3-flash-preview">Gemini 3 Flash Preview</option>
+                    </select>
+                </div>
+                <p class="text-sm text-gray-500">Zmiany zostaną użyte przy następnym uruchomieniu rozpoznawania oraz identyfikacji encji.</p>
+            </div>
+            <div class="p-6 border-t bg-gray-50 flex justify-end gap-2">
+                <button onclick="toggleSettings(false)"
+                    class="px-4 py-2 bg-white border text-gray-700 rounded-lg font-medium hover:bg-gray-50">
+                    Anuluj
+                </button>
+                <button onclick="saveTagSettings()"
+                    class="px-4 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 shadow-sm">
+                    Zapisz
+                </button>
+            </div>
+        </div>
+    </div>
+
     <div id="helpModal"
         class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
         <div class="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
@@ -238,6 +331,7 @@
                         Analiza
                     </h4>
                 <p>Kliknij najpierw <strong>"Rozpoznaj encje"</strong>, aby utworzyć TEI-XML z tagami. Jeśli potrzebujesz także identyfikacji referencyjnej osób i miejsc, uruchom następnie <strong>"Identyfikuj encje"</strong>.</p>
+                <p class="mt-2">Przycisk <strong>"Parametry"</strong> pozwala włączyć lub wyłączyć poszczególne typy tagów przed uruchomieniem rozpoznawania.</p>
                 </section>
 
                 <section class="bg-blue-50 p-4 rounded-lg border border-blue-100">
@@ -292,10 +386,25 @@
 
     <script>
         const EDITABLE_TAG_TYPES = ['persName', 'placeName', 'orgName', 'roleName', 'date'];
+        const DEFAULT_ENABLED_RECOGNITION_TAG_TYPES = ['persName', 'placeName', 'date', 'roleName'];
+        const DEFAULT_GEMINI_MODEL = 'gemini-3.1-flash-lite-preview';
+        const TAG_SETTINGS_OPTIONS = [
+            { value: 'persName', label: 'Osoby' },
+            { value: 'placeName', label: 'Miejsca' },
+            { value: 'date', label: 'Daty' },
+            { value: 'roleName', label: 'Funkcje i urzędy' },
+            { value: 'orgName', label: 'Instytucje' },
+        ];
+        const MODEL_SETTINGS_OPTIONS = [
+            { value: 'gemini-3.1-flash-lite-preview', label: 'Gemini 3.1 Flash Lite Preview' },
+            { value: 'gemini-3-flash-preview', label: 'Gemini 3 Flash Preview' },
+        ];
         let currentXmlDoc = null;
         let currentXmlHasDeclaration = true;
         let currentIdentificationPerformed = false;
         let currentResultTab = 'xml';
+        let enabledRecognitionTagTypes = [...DEFAULT_ENABLED_RECOGNITION_TAG_TYPES];
+        let selectedGeminiModel = DEFAULT_GEMINI_MODEL;
 
         function parseXmlDocument(xml) {
             const parser = new DOMParser();
@@ -389,6 +498,60 @@
         function hideTagContextMenu() {
             document.getElementById('tagContextMenu').classList.add('hidden');
             document.getElementById('tagContextMenuItems').innerHTML = '';
+        }
+
+        function syncTagSettingsFormFromState() {
+            TAG_SETTINGS_OPTIONS.forEach(option => {
+                const checkbox = document.getElementById(`tag-toggle-${option.value}`);
+                if (checkbox) {
+                    checkbox.checked = enabledRecognitionTagTypes.includes(option.value);
+                }
+            });
+            const modelSelect = document.getElementById('modelSelect');
+            if (modelSelect) {
+                modelSelect.value = selectedGeminiModel;
+            }
+        }
+
+        function getSelectedTagTypesFromSettingsForm() {
+            return TAG_SETTINGS_OPTIONS
+                .filter(option => {
+                    const checkbox = document.getElementById(`tag-toggle-${option.value}`);
+                    return checkbox && checkbox.checked;
+                })
+                .map(option => option.value);
+        }
+
+        function toggleSettings(show) {
+            const modal = document.getElementById('settingsModal');
+            if (show) {
+                syncTagSettingsFormFromState();
+                modal.classList.remove('hidden');
+                document.body.style.overflow = 'hidden';
+                return;
+            }
+            modal.classList.add('hidden');
+            document.body.style.overflow = 'auto';
+        }
+
+        function saveTagSettings() {
+            const selectedTagTypes = getSelectedTagTypesFromSettingsForm();
+            const modelSelect = document.getElementById('modelSelect');
+            const chosenModel = modelSelect ? modelSelect.value : DEFAULT_GEMINI_MODEL;
+            if (!selectedTagTypes.length) {
+                alert('Wybierz co najmniej jeden typ tagu do rozpoznawania.');
+                return;
+            }
+
+            enabledRecognitionTagTypes = selectedTagTypes;
+            selectedGeminiModel = MODEL_SETTINGS_OPTIONS.some(option => option.value === chosenModel)
+                ? chosenModel
+                : DEFAULT_GEMINI_MODEL;
+            toggleSettings(false);
+
+            if (document.getElementById('xmlOutput').textContent.trim()) {
+                renderWorkflowStatus('Parametry analizy zostały zmienione. Obecny wynik pozostaje bez zmian, ale nowe ustawienia zostaną użyte przy następnym uruchomieniu rozpoznawania i identyfikacji encji.');
+            }
         }
 
         function showTagContextMenu(x, y, items) {
@@ -577,9 +740,16 @@
                 const response = await fetch("{{ url_for('recognize') }}", {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ text: text })
+                    body: JSON.stringify({
+                        text: text,
+                        tag_types: enabledRecognitionTagTypes,
+                        model_name: selectedGeminiModel,
+                    })
                 });
                 const data = await parseApiResponse(response, 'rozpoznawanie encji');
+                if (data.model_name) {
+                    selectedGeminiModel = data.model_name;
+                }
 
                 renderXml(data.xml);
                 currentIdentificationPerformed = false;
@@ -606,9 +776,15 @@
                 const response = await fetch("{{ url_for('identify') }}", {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ xml: xml })
+                    body: JSON.stringify({
+                        xml: xml,
+                        model_name: selectedGeminiModel,
+                    })
                 });
                 const data = await parseApiResponse(response, 'identyfikacja encji');
+                if (data.model_name) {
+                    selectedGeminiModel = data.model_name;
+                }
 
                 renderXml(data.xml);
                 currentIdentificationPerformed = true;
@@ -1028,8 +1204,12 @@ Sultan Bayazeth han, Dei gratia imperator Graeciae, Asiae atque Europae et mariu
         // opcjonalnie: Zamknij modal kliknięciem poza białym oknem
         window.onclick = function(event) {
             const modal = document.getElementById('helpModal');
+            const settingsModal = document.getElementById('settingsModal');
             if (event.target == modal) {
                 toggleHelp(false);
+            }
+            if (event.target == settingsModal) {
+                toggleSettings(false);
             }
             if (!event.target.closest('#tagContextMenu')) {
                 hideTagContextMenu();

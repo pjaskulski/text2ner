@@ -14,15 +14,22 @@ from google.genai import types
 load_dotenv()
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 TEXT2NER_DIAGNOSTIC = os.environ.get("TEXT2NER_DIAGNOSTIC", "").strip().lower() in {"1", "true", "yes", "on"}
-MODEL = "gemini-3.1-flash-lite-preview"
+DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite-preview"
+SUPPORTED_GEMINI_MODELS = {
+    "gemini-3.1-flash-lite-preview": "Gemini 3.1 Flash Lite Preview",
+    "gemini-3-flash-preview": "Gemini 3 Flash Preview",
+}
 TIMEOUT_MS = 120 * 1000
 MAX_REASONABLE_LIFESPAN_YEARS = 100
 ENABLE_WIKIDATA_SEMANTIC_FALLBACK = False
 WIKIDATA_SPARQL_URL = "https://query.wikidata.org/sparql"
 PLWIKI_API_URL = "https://pl.wikipedia.org/w/api.php"
+SUPPORTED_TEI_TAG_TYPES = ("persName", "placeName", "date", "roleName", "orgName")
+DEFAULT_ENABLED_TAG_TYPES = ("persName", "placeName", "date", "roleName")
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 CURRENT_DIAGNOSTIC_LOG_PATH = ContextVar("CURRENT_DIAGNOSTIC_LOG_PATH", default=None)
+CURRENT_GEMINI_MODEL = ContextVar("CURRENT_GEMINI_MODEL", default=DEFAULT_GEMINI_MODEL)
 
 
 WIKIBASE_SOURCES = {
@@ -293,6 +300,14 @@ PLWIKI_OFFICE_EQUIVALENTS = {
     "wojewoda": "wojewoda",
 }
 
+TAG_PROMPT_LABELS = {
+    "persName": "<persName> dla osób",
+    "placeName": "<placeName> dla miejsc, regionów, krajów, miast i jednostek terytorialnych",
+    "orgName": "<orgName> dla instytucji, organizacji, wspólnot i ciał kościelnych lub politycznych",
+    "roleName": "<roleName> dla urzędów, funkcji, godności i określeń roli społecznej lub kościelnej",
+    "date": "<date> dla dat",
+}
+
 SEMANTIC_FALLBACK_OFFICE_FAMILIES = {
     "bishop_family": {
         "entity_ids": ["Q611644"],
@@ -414,6 +429,145 @@ def diagnostic_log(message):
                 log_file.write(f"{line}\n")
         else:
             print(line)
+
+
+def normalize_enabled_tag_types(tag_types):
+    """Normalizuje listę włączonych tagów do bezpiecznego, uporządkowanego zestawu."""
+    if tag_types is None:
+        return list(DEFAULT_ENABLED_TAG_TYPES)
+
+    if isinstance(tag_types, str):
+        tag_types = [tag_types]
+
+    normalized = []
+    seen = set()
+    for tag_type in tag_types or []:
+        normalized_tag = normalize_whitespace(tag_type)
+        if normalized_tag not in SUPPORTED_TEI_TAG_TYPES or normalized_tag in seen:
+            continue
+        seen.add(normalized_tag)
+        normalized.append(normalized_tag)
+    return normalized
+
+
+def normalize_gemini_model_name(model_name):
+    """Zwraca wspieraną nazwę modelu Gemini albo domyślny model aplikacji."""
+    normalized_name = normalize_whitespace(model_name)
+    if normalized_name in SUPPORTED_GEMINI_MODELS:
+        return normalized_name
+    return DEFAULT_GEMINI_MODEL
+
+
+def set_current_gemini_model(model_name):
+    """Ustawia model Gemini używany w bieżącym kontekście żądania."""
+    normalized_model = normalize_gemini_model_name(model_name)
+    return CURRENT_GEMINI_MODEL.set(normalized_model)
+
+
+def reset_current_gemini_model(token):
+    """Przywraca poprzedni model Gemini po zakończeniu żądania."""
+    if token is not None:
+        CURRENT_GEMINI_MODEL.reset(token)
+
+
+def get_current_gemini_model():
+    """Zwraca model Gemini aktywny w bieżącym kontekście żądania."""
+    return CURRENT_GEMINI_MODEL.get()
+
+
+def get_enabled_tag_prompt_labels(enabled_tag_types):
+    """Zwraca listę opisów dozwolonych tagów do promptów Gemini."""
+    return [TAG_PROMPT_LABELS[tag_type] for tag_type in enabled_tag_types]
+
+
+def build_ner_tagging_rules(enabled_tag_types):
+    """Buduje część promptu z zasadami tagowania dla wybranych typów encji."""
+    rules = []
+
+    if "persName" in enabled_tag_types:
+        rules.extend([
+            "1. Użyj znacznika <persName> dla osób. Zwróć szczególną uwagę na średniowieczne zapisy nazw gdzie czasem nie występują nazwiska, lecz zapis typu: Jan ze Żnina, Otto von Stamburg, Gijon de Stalieri. To są pełne nazwy osób, nie należy tagować osobno miejscowości, lecz całość jako osobę: <persName>Jan ze Żnina</persName>. Niekiedy będą to też same imiona osób, np. 'Bartolomeo', albo same nazwiska, np. 'Potocki'.",
+        ])
+
+    if "placeName" in enabled_tag_types:
+        rules.extend([
+            "2. Użyj znacznika <placeName> dla miejsc.",
+            "2a. Jeśli nazwa miejscowa występuje tylko jako przymiotnik lub element tytułu/urzędu osoby, nie taguj jej osobno jako <placeName>. Przykład: 'episcopus Poznaniensis' to opis urzędu osoby, a nie samodzielne wskazanie miejsca do otagowania.",
+            "2b. Jeśli nazwa miejscowa występuje w nagłówku listu lub w podpisie, np. 'Praga, 1 iulii 1393' albo 'Datum Mediolani', to również musi zostać otagowana jako <placeName>.",
+        ])
+
+    if "orgName" in enabled_tag_types:
+        rules.extend([
+            "3. Użyj znacznika <orgName> dla instytucji, organizacji, wspólnot i ciał kościelnych lub politycznych.",
+            "3a. Frazy typu 'Romane Ecclesie', 'Ecclesia Romana', 'Sedes Apostolica', 'Curia Romana', 'Ordo Theutonicus' powinny być oznaczane jako <orgName>, a nie <placeName>.",
+            "3b. Jeśli nazwa miejsca jest tylko częścią nazwy instytucji, nie taguj jej osobno jako <placeName>.",
+        ])
+
+    if "roleName" in enabled_tag_types:
+        rules.extend([
+            "4. Użyj znacznika <roleName> dla urzędów, funkcji, godności i określeń roli społecznej lub kościelnej.",
+            "4a. Jeśli urząd lub funkcja tworzy spójną frazę, oznacz całość, np. <roleName>canonico Neapolitano</roleName> albo <roleName>cardinalis</roleName>.",
+            "4b. Jeśli w obrębie <roleName> występuje przymiotnik miejscowy lub nazwa miejsca będąca częścią tytułu, nie taguj jej osobno jako <placeName>. Przykład: <roleName>episcopus Poznaniensis</roleName>, a nie osobne <placeName>Poznaniensis</placeName>.",
+        ])
+
+    if "date" in enabled_tag_types:
+        rules.extend([
+            "5. Użyj znacznika <date> dla dat, jeśli w tekście rzeczywiście występuje zapis daty.",
+            "5a. Jeśli można bezpiecznie znormalizować datę, dodaj atrybut when w formacie ISO: pełna data <date when=\"1446-07-04\">4 iulii 1446</date>, rok i miesiąc <date when=\"1446-07\">iulii 1446</date>, sam rok <date when=\"1446\">1446</date>.",
+            "5b. Jeśli data jest zbyt niejednoznaczna, nadal możesz użyć <date>, ale bez atrybutu when.",
+            "5c. Nie twórz daty z samych liczb porządkowych, numerów dokumentu lub innych liczb, które nie są rzeczywistą datą.",
+        ])
+
+    rules.extend([
+        "6. NIE zmieniaj ani jednego znaku w oryginalnym tekście, zachowaj pisownię, interpunkcję i wielkość liter.",
+        "7. Całość umieść wewnątrz tagu <div type=\"document\">.",
+        "8. Uwzględnij podział tekstu na akapity, używając znacznika <p>.",
+        "9. Otaguj wyłącznie typy tagów dozwolone w tym zadaniu. Jeśli fragment należy do wyłączonego typu, pozostaw go bez tagu.",
+    ])
+    return "\n".join(rules)
+
+
+def build_review_prompt(raw_text, tagged_xml, enabled_tag_types):
+    """Buduje prompt do drugiego passu korekcyjnego z uwzględnieniem wybranych tagów."""
+    allowed_tags = "\n".join(f"- {label}" for label in get_enabled_tag_prompt_labels(enabled_tag_types))
+    disabled_tag_types = [tag for tag in SUPPORTED_TEI_TAG_TYPES if tag not in enabled_tag_types]
+    disabled_tags_text = ", ".join(f"<{tag}>" for tag in disabled_tag_types) or "brak"
+
+    return f"""
+Jesteś ekspertem od cyfrowej edycji tekstów historycznych, standardu TEI-XML, historykiem średniowiecza i renesansu oraz paleografem.
+Otrzymujesz oryginalny tekst oraz jego wstępnie otagowaną wersję XML. Twoim zadaniem jest poprawić ten XML, nie zmieniając ani jednego znaku oryginalnego tekstu.
+
+CELE KOREKTY:
+1. Dodaj brakujące tagi tylko spośród typów dozwolonych w tym zadaniu.
+2. Popraw błędne klasyfikacje tagów.
+3. Zachowaj poprawne istniejące tagi i podział na akapity.
+
+DOZWOLONE TAGI:
+{allowed_tags}
+
+TAGI WYŁĄCZONE:
+{disabled_tags_text}
+
+WAŻNE REGUŁY:
+1. Jeśli typ encji jest wyłączony, pozostaw ten fragment bez tagu.
+2. Instytucje nie są miejscami. Frazy typu "Romane Ecclesie", "Ecclesia Romana", "Sedes Apostolica", "Curia Romana", "Ordo Theutonicus", "Capitulum Cracoviense" powinny być <orgName>, ale tylko wtedy, gdy ten typ tagu jest dozwolony.
+3. Jeśli przymiotnik miejscowy jest częścią urzędu albo instytucji, nie wydzielaj go osobno jako <placeName>.
+4. Jeśli w tekście występuje rzeczywiste miejsce użyte samodzielnie, wtedy oznacz je jako <placeName>, ale tylko jeśli ten typ tagu jest dozwolony.
+5. Nie zgaduj. Jeśli wyrażenie nie jest dość pewne albo należy do wyłączonego typu, zostaw je bez tagu.
+6. Zwróć tylko pełny poprawiony XML wewnątrz <div type="document">.
+
+ORYGINALNY TEKST:
+---
+{raw_text}
+---
+
+WSTĘPNY XML:
+---
+{tagged_xml}
+---
+
+Zwróć TYLKO poprawiony XML.
+    """
 
 
 def parse_json_object(text):
@@ -859,17 +1013,36 @@ def normalize_tagged_org_names(tagged_xml):
     return normalized_xml
 
 
-def cleanup_tagged_xml_output(tagged_text):
+def unwrap_disallowed_entity_tags(tagged_xml, enabled_tag_types):
+    """Usuwa z XML-a tagi encji, które nie są włączone w bieżącej konfiguracji."""
+    soup = BeautifulSoup(tagged_xml, "xml")
+    disallowed_tag_types = [
+        tag_type for tag_type in SUPPORTED_TEI_TAG_TYPES if tag_type not in enabled_tag_types
+    ]
+    for tag_type in disallowed_tag_types:
+        for tag in list(soup.find_all(tag_type)):
+            tag.unwrap()
+
+    normalized_xml = soup.prettify(formatter="minimal")
+    normalized_xml = re.sub(r"<\?xml.*?\?>", "", normalized_xml).strip()
+    return normalized_xml
+
+
+def cleanup_tagged_xml_output(tagged_text, enabled_tag_types=None):
     """Czyści odpowiedź modelu i doprowadza ją do spójnego XML-a roboczego."""
+    enabled_tag_types = normalize_enabled_tag_types(enabled_tag_types)
     cleaned_text = str(tagged_text or "").strip()
     cleaned_text = re.sub(r"^```xml|^```|```$", "", cleaned_text, flags=re.MULTILINE).strip()
     if not cleaned_text.startswith("<div"):
         cleaned_text = f'<div type="document">{cleaned_text}</div>'
-    cleaned_text = normalize_tagged_org_names(cleaned_text)
-    return normalize_tagged_dates(cleaned_text)
+    if "orgName" in enabled_tag_types:
+        cleaned_text = normalize_tagged_org_names(cleaned_text)
+    if "date" in enabled_tag_types:
+        cleaned_text = normalize_tagged_dates(cleaned_text)
+    return unwrap_disallowed_entity_tags(cleaned_text, enabled_tag_types)
 
 
-def generate_tagged_xml_with_gemini(prompt):
+def generate_tagged_xml_with_gemini(prompt, enabled_tag_types=None):
     """Uruchamia Gemini dla promptu tagującego i zwraca oczyszczony XML."""
     http_options = types.HttpOptions(timeout=TIMEOUT_MS)
     config = types.GenerateContentConfig(
@@ -877,52 +1050,18 @@ def generate_tagged_xml_with_gemini(prompt):
         http_options=http_options,
     )
     response = client.models.generate_content(
-        model=MODEL,
+        model=get_current_gemini_model(),
         contents=prompt,
         config=config,
     )
-    return cleanup_tagged_xml_output(response.text)
+    return cleanup_tagged_xml_output(response.text, enabled_tag_types=enabled_tag_types)
 
 
-def review_tagged_xml_with_gemini(raw_text, tagged_xml):
+def review_tagged_xml_with_gemini(raw_text, tagged_xml, enabled_tag_types=None):
     """Drugi pass korekcyjny: uzupełnia braki i poprawia mylenie miejsc z instytucjami."""
-    prompt = f"""
-Jesteś ekspertem od cyfrowej edycji tekstów historycznych, standardu TEI-XML, historykiem średniowiecza i renesansu oraz paleografem.
-Otrzymujesz oryginalny tekst oraz jego wstępnie otagowaną wersję XML. Twoim zadaniem jest poprawić ten XML, nie zmieniając ani jednego znaku oryginalnego tekstu.
-
-CELE KOREKTY:
-1. Dodaj brakujące tagi, jeśli we wstępnym XML-u pominięto oczywiste osoby, miejsca, role, instytucje lub daty.
-2. Popraw błędne klasyfikacje tagów.
-3. Zachowaj poprawne istniejące tagi i podział na akapity.
-
-DOZWOLONE TAGI:
-- <persName> dla osób
-- <placeName> dla rzeczywistych miejsc, regionów, krajów, miast i jednostek terytorialnych
-- <orgName> dla instytucji, organizacji, wspólnot i ciał kościelnych lub politycznych
-- <roleName> dla urzędów, funkcji, godności i określeń roli społecznej lub kościelnej
-- <date> dla dat; jeśli to możliwe zachowaj lub popraw atrybut when w ISO
-
-WAŻNE REGUŁY:
-1. Instytucje nie są miejscami. Frazy typu "Romane Ecclesie", "Ecclesia Romana", "Sedes Apostolica", "Curia Romana", "Ordo Theutonicus", "Capitulum Cracoviense" powinny być <orgName>, a nie <placeName>.
-2. Jeśli przymiotnik miejscowy jest częścią urzędu albo instytucji, nie wydzielaj go osobno jako <placeName>.
-   Przykład: <roleName>episcopus Poznaniensis</roleName>.
-3. Jeśli w tekście występuje rzeczywiste miejsce użyte samodzielnie, wtedy oznacz je jako <placeName>.
-4. Nie zgaduj. Jeśli wyrażenie nie jest dość pewne, zostaw je bez tagu.
-5. Zwróć tylko pełny poprawiony XML wewnątrz <div type="document">.
-
-ORYGINALNY TEKST:
----
-{raw_text}
----
-
-WSTĘPNY XML:
----
-{tagged_xml}
----
-
-Zwróć TYLKO poprawiony XML.
-    """
-    return generate_tagged_xml_with_gemini(prompt)
+    enabled_tag_types = normalize_enabled_tag_types(enabled_tag_types)
+    prompt = build_review_prompt(raw_text, tagged_xml, enabled_tag_types)
+    return generate_tagged_xml_with_gemini(prompt, enabled_tag_types=enabled_tag_types)
 
 
 def normalize_form_analysis(name, tag_type, analysis):
@@ -2588,7 +2727,7 @@ Przykład dla miejsca:
             http_options=http_options,
         )
         response = client.models.generate_content(
-            model=MODEL,
+            model=get_current_gemini_model(),
             contents=prompt,
             config=config,
         )
@@ -2717,7 +2856,7 @@ Zwróć tylko pełny URL wybranego kandydata albo dokładnie NONE.
             http_options=http_options,
         )
         response = client.models.generate_content(
-            model=MODEL,
+            model=get_current_gemini_model(),
             contents=prompt,
             config=config,
         )
@@ -2892,42 +3031,34 @@ def link_entity(name, context, tag_type, document_years=None):
 
 
 # ---------------------------------- NER --------------------------------------
-def tag_entities_with_gemini(raw_text):
+def tag_entities_with_gemini(raw_text, enabled_tag_types=None):
     """
     Wykorzystuje Gemini do rozpoznania osób, miejsc, dat, funkcji i instytucji w tekście
     i otagowania ich zgodnie ze standardem TEI.
     """
+    enabled_tag_types = normalize_enabled_tag_types(enabled_tag_types)
+    if not enabled_tag_types:
+        raise ValueError("Wybierz co najmniej jeden typ tagu do rozpoznawania encji.")
+
+    enabled_tag_labels = "\n".join(
+        f"- {label}" for label in get_enabled_tag_prompt_labels(enabled_tag_types)
+    )
+    disabled_tag_types = [tag_type for tag_type in SUPPORTED_TEI_TAG_TYPES if tag_type not in enabled_tag_types]
+    disabled_tag_labels = ", ".join(f"<{tag_type}>" for tag_type in disabled_tag_types) or "brak"
+    tagging_rules = build_ner_tagging_rules(enabled_tag_types)
+
     prompt = f"""
 Jesteś ekspertem od cyfrowej edycji tekstów historycznych, standardu TEI-XML, historykiem średniowiecza i renesansu oraz paleografem.
-Twoim zadaniem jest rozpoznanie nazw osób (postaci historycznych), nazw geograficznych (miejscowości, krain, regionów), dat, określeń urzędów i funkcji oraz nazw instytucji w poniższym tekście łacińskiego (lub polskego, niemieckiego) dokumentu historycznego oraz ich otagowanie.
+Twoim zadaniem jest rozpoznanie encji tylko tych typów, które zostały włączone dla tego przebiegu analizy, i otagowanie ich w poniższym tekście łacińskiego, polskiego lub niemieckiego dokumentu historycznego.
+
+DOZWOLONE TAGI W TYM ZADANIU:
+{enabled_tag_labels}
+
+TAGI WYŁĄCZONE:
+{disabled_tag_labels}
 
 ZASADY TAGOWANIA:
-1. Użyj znacznika <persName> dla osób. Zwróć szczególną uwagę na średniowieczne zapisy nazw gdzie czasem nie występują nazwiska
-   lecz zapis: Jan ze Żnina, Otto von Stamburg, Gijon de Stalieri itp. - to są pełne nazwy osób, nie należy tagować osobno miejscowości lecz
-   całość jako osobę: <persName>Jan ze Żnina</persName>. Niekiedy będą to być też same imiona osób np. 'Bartolomeo' albo same nazwiska np. 'Potocki'.
-2. Użyj znacznika <placeName> dla miejsc.
-2a. Jeśli nazwa miejscowa występuje tylko jako przymiotnik lub element tytułu/urzędu osoby, nie taguj jej osobno jako <placeName>.
-    Przykład: "episcopus Poznaniensis" to opis urzędu osoby, a nie samodzielne wskazanie miejsca do otagowania.
-2b. Jeśli nazwa miejscowa występuje w nagłówku np. listu, lub w podpisie, np. "Praga, 1 iulii 1393" albo "Datum Mediolani",
-    to również musi zostać otagowana jako <placeName>.
-3. Użyj znacznika <orgName> dla instytucji, organizacji, wspólnot i ciał kościelnych lub politycznych.
-3a. Frazy typu "Romane Ecclesie", "Ecclesia Romana", "Sedes Apostolica", "Curia Romana", "Ordo Theutonicus" powinny być oznaczane jako <orgName>, a nie <placeName>.
-3b. Jeśli nazwa miejsca jest tylko częścią nazwy instytucji, nie taguj jej osobno jako <placeName>.
-4. Użyj znacznika <roleName> dla urzędów, funkcji, godności i określeń roli społecznej lub kościelnej.
-4a. Jeśli urząd lub funkcja tworzy spójną frazę, oznacz całość, np. <roleName>canonico Neapolitano</roleName> albo <roleName>cardinalis</roleName>.
-4b. Jeśli w obrębie <roleName> występuje przymiotnik miejscowy lub nazwa miejsca będąca częścią tytułu, nie taguj jej osobno jako <placeName>.
-    Przykład: <roleName>episcopus Poznaniensis</roleName>, a nie osobne <placeName>Poznaniensis</placeName>.
-5. Użyj znacznika <date> dla dat, jeśli w tekście rzeczywiście występuje zapis daty.
-5a. Jeśli można bezpiecznie znormalizować datę, dodaj atrybut when w formacie ISO:
-    - pełna data: <date when="1446-07-04">4 iulii 1446</date>
-    - rok i miesiąc: <date when="1446-07">iulii 1446</date>
-    - sam rok: <date when="1446">1446</date>
-5b. Jeśli data jest zbyt niejednoznaczna, nadal możesz użyć <date>, ale bez atrybutu when.
-5c. Nie twórz daty z samych liczb porządkowych, numerów dokumentu lub innych liczb, które nie są rzeczywistą datą.
-6. NIE zmieniaj ani jednego znaku w oryginalnym tekście (zachowaj pisownię, interpunkcję, wielkość liter).
-7. Całość umieść wewnątrz tagu <div type="document">.
-8. Uwzględnij podział tekstu na akapity, używając znacznika <p>.
-9. Otaguj tylko te osoby, miejsca, instytucje, role i daty, które faktycznie występują w tekście.
+{tagging_rules}
 
 Tekst do analizy:
 ---
@@ -2937,10 +3068,14 @@ Tekst do analizy:
 Zwróć TYLKO wynikowy kod XML. Nie dodawaj komentarzy ani wyjaśnień.
     """
     try:
-        first_pass_xml = generate_tagged_xml_with_gemini(prompt)
+        first_pass_xml = generate_tagged_xml_with_gemini(prompt, enabled_tag_types=enabled_tag_types)
         diagnostic_log("Pierwszy pass tagowania XML zakończony.")
         try:
-            reviewed_xml = review_tagged_xml_with_gemini(raw_text, first_pass_xml)
+            reviewed_xml = review_tagged_xml_with_gemini(
+                raw_text,
+                first_pass_xml,
+                enabled_tag_types=enabled_tag_types,
+            )
             diagnostic_log("Drugi pass korekcyjny tagowania XML zakończony.")
             return reviewed_xml
         except Exception as review_exc:
