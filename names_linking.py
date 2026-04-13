@@ -1907,9 +1907,13 @@ def filter_and_rank_semantic_fallback_candidates(candidates, profile, entity_ana
         )
     )
 
+    ranking_labels = [
+        f"{candidate['source']}:{candidate['id']} score={candidate.get('semantic_fallback_score', 0)}"
+        for candidate in enriched[:8]
+    ]
     diagnostic_log(
         f"Ranking fallbacku semantycznego dla '{entity_analysis['surface']}' (persName): "
-        f"{[f'{candidate['source']}:{candidate['id']} score={candidate.get('semantic_fallback_score', 0)}' for candidate in enriched[:8]]}"
+        f"{ranking_labels}"
     )
     return enriched[:8]
 
@@ -2208,9 +2212,10 @@ def collect_plwiki_person_fallback_candidates(entity_analysis):
                 candidate["matched_queries"].append(query)
 
     ordered = order_candidates_for_review(dedupe_candidates(candidates), entity_analysis)[:10]
+    ordered_labels = [f"{candidate['source']}:{candidate['id']}" for candidate in ordered]
     diagnostic_log(
         f"Uporządkowani kandydaci z fallbacku plwiki dla '{entity_analysis['surface']}' (persName): "
-        f"{[f'{candidate['source']}:{candidate['id']}' for candidate in ordered]}"
+        f"{ordered_labels}"
     )
     diagnostic_log_temporal_candidates(entity_analysis, "persName", ordered, "plwiki_fallback")
     return ordered
@@ -2473,9 +2478,12 @@ def collect_candidates(entity_analysis, context, tag_type):
         ("WikiHum", "va.wiki.kul.pl"),
     )
     if local_candidates:
+        local_candidate_labels = [
+            f"{candidate['source']}:{candidate['id']}" for candidate in local_candidates
+        ]
         diagnostic_log(
             f"Kandydaci lokalni dla '{entity_analysis['surface']}' ({tag_type}): "
-            f"{[f'{candidate['source']}:{candidate['id']}' for candidate in local_candidates]}"
+            f"{local_candidate_labels}"
         )
         diagnostic_log_temporal_candidates(entity_analysis, tag_type, local_candidates, "lokalne")
         return local_candidates[:12]
@@ -2490,9 +2498,12 @@ def collect_candidates(entity_analysis, context, tag_type):
         tag_type,
         ("Wikidata",),
     )
+    wikidata_candidate_labels = [
+        f"{candidate['source']}:{candidate['id']}" for candidate in wikidata_candidates
+    ]
     diagnostic_log(
         f"Kandydaci Wikidata dla '{entity_analysis['surface']}' ({tag_type}): "
-        f"{[f'{candidate['source']}:{candidate['id']}' for candidate in wikidata_candidates]}"
+        f"{wikidata_candidate_labels}"
     )
     diagnostic_log_temporal_candidates(entity_analysis, tag_type, wikidata_candidates, "wikidata")
     return wikidata_candidates[:12]
@@ -2505,9 +2516,12 @@ def collect_wikidata_only_candidates(entity_analysis, tag_type):
         tag_type,
         ("Wikidata",),
     )
+    wikidata_retry_labels = [
+        f"{candidate['source']}:{candidate['id']}" for candidate in wikidata_candidates
+    ]
     diagnostic_log(
         f"Dodatkowi kandydaci Wikidata dla '{entity_analysis['surface']}' ({tag_type}): "
-        f"{[f'{candidate['source']}:{candidate['id']}' for candidate in wikidata_candidates]}"
+        f"{wikidata_retry_labels}"
     )
     diagnostic_log_temporal_candidates(entity_analysis, tag_type, wikidata_candidates, "wikidata_retry")
     return wikidata_candidates[:12]
