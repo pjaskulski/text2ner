@@ -46,6 +46,12 @@ Pełny diagram procesu jest dostępny w trzech wersjach:
 - [PROCESS_DIAGRAM.svg](/home/piotr/ihpan/text2ner/PROCESS_DIAGRAM.svg) - wersja do szybkiego podglądu
 - [PROCESS_DIAGRAM.pdf](/home/piotr/ihpan/text2ner/PROCESS_DIAGRAM.pdf) - wersja do druku i udostępniania
 
+Dostępna jest także uproszczona wersja diagramu, przygotowana z myślą o użytkownikach nietechnicznych:
+
+- [PROCESS_DIAGRAM_SIMPLE.dot](/home/piotr/ihpan/text2ner/PROCESS_DIAGRAM_SIMPLE.dot) - źródło uproszczonego diagramu
+- [PROCESS_DIAGRAM_SIMPLE.svg](/home/piotr/ihpan/text2ner/PROCESS_DIAGRAM_SIMPLE.svg) - uproszczony diagram do szybkiego podglądu
+- [PROCESS_DIAGRAM_SIMPLE.pdf](/home/piotr/ihpan/text2ner/PROCESS_DIAGRAM_SIMPLE.pdf) - uproszczony diagram do druku i prezentacji
+
 ### 1. Ustawienie parametrów analizy
 
 Przed uruchomieniem rozpoznawania użytkownik może w oknie `Parametry`:
@@ -218,10 +224,15 @@ Diagram procesu rozpoznawania i identyfikacji dostępny jest jako:
 - [PROCESS_DIAGRAM.dot](/home/piotr/ihpan/text2ner/PROCESS_DIAGRAM.dot) - plik źródłowy
 - [PROCESS_DIAGRAM.svg](/home/piotr/ihpan/text2ner/PROCESS_DIAGRAM.svg) - podstawowa wersja do przeglądania
 - [PROCESS_DIAGRAM.pdf](/home/piotr/ihpan/text2ner/PROCESS_DIAGRAM.pdf) - wersja do eksportu i wydruku
+- [PROCESS_DIAGRAM_SIMPLE.dot](/home/piotr/ihpan/text2ner/PROCESS_DIAGRAM_SIMPLE.dot) - uproszczony plik źródłowy
+- [PROCESS_DIAGRAM_SIMPLE.svg](/home/piotr/ihpan/text2ner/PROCESS_DIAGRAM_SIMPLE.svg) - uproszczona wersja do przeglądania
+- [PROCESS_DIAGRAM_SIMPLE.pdf](/home/piotr/ihpan/text2ner/PROCESS_DIAGRAM_SIMPLE.pdf) - uproszczona wersja do eksportu i wydruku
 
 Plik źródłowy diagramu (dot) można przetworzyć do svg i pdf za pomocą poleceń:
 
 ```bash
 dot -Tsvg PROCESS_DIAGRAM.dot -o PROCESS_DIAGRAM.svg
 dot -Tpdf PROCESS_DIAGRAM.dot -o PROCESS_DIAGRAM.pdf
+dot -Tsvg PROCESS_DIAGRAM_SIMPLE.dot -o PROCESS_DIAGRAM_SIMPLE.svg
+dot -Tpdf PROCESS_DIAGRAM_SIMPLE.dot -o PROCESS_DIAGRAM_SIMPLE.pdf
 ```

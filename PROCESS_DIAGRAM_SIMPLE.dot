@@ -1,0 +1,46 @@
+digraph text2ner_process_simple {
+    graph [
+        rankdir=TB,
+        labelloc="t",
+        label="TEXT2NER: uproszczony przebieg pracy aplikacji",
+        fontsize=20,
+        fontname="Helvetica",
+        pad=0.3,
+        nodesep=0.45,
+        ranksep=0.75,
+        splines=polyline,
+        bgcolor="white"
+    ];
+
+    node [
+        shape=box,
+        style="rounded,filled",
+        fillcolor="#F8FAFC",
+        color="#94A3B8",
+        fontname="Helvetica",
+        fontsize=12,
+        margin="0.18,0.12"
+    ];
+
+    edge [
+        color="#475569",
+        arrowsize=0.8,
+        fontname="Helvetica",
+        fontsize=10
+    ];
+
+    start [label="1. Dokument do analizy wprowadzony do pola tekstowego (do 5000 znaków)", fillcolor="#E0F2FE", color="#0284C7"];
+    settings [label="2. Parametry analizy:\nmodel Gemini oraz typy tagów,\nktóre mają być rozpoznawane"];
+    recognize [label="3. Funkcja Rozpoznaj encje\nAplikacja tworzy TEI-XML\ni oznacza osoby, miejsca,\ndaty, funkcje i instytucje (tagi zależnie od ustawień)"];
+    preview [label="4. Podgląd wyniku\nUżytkownik ogląda XML\nlub kolorowany podgląd tekstu"];
+    manual [label="5. Opcjonalna korekta ręczna\nMożna usunąć tag,\nzmienić jego typ albo dodać nowy"];
+    identify [label="6. Identyfikacja encji\nAplikacja próbuje powiązać\nosoby (persName) i miejsca (placeName)\nz rekordami baz referencyjnych"];
+    sources [label="7. Wyszukiwanie kandydatów\nw WikiHum, va.wiki.kul.pl,\njeżeli nieskuteczna -> Wikidata i w polskiej Wikipedii"];
+    decision [label="8. Ocena kandydatów\nModel Gemini porównuje kontekst,\nwarianty nazwy (dla osób\nrównież zgodność chronologiczną)"];
+    result [label="9. Wynik końcowy\nTEI-XML z wyróżnieniem osób, miejsc i ich indetyfikacją", fillcolor="#DCFCE7", color="#16A34A"];
+    lists [label="10. Dodatkowe wyniki:\nLista encji (osób i miejsc) zidentyfikowanych\ni niezidentyfikowanych"];
+    log [label="11. Log diagnostyczny\nMożna pobrać pełny log\nlub obejrzeć fragment\ndla konkretnej encji", fillcolor="#FEF3C7", color="#D97706"];
+
+    start -> settings -> recognize -> preview -> manual -> identify -> sources -> decision -> result -> lists -> log;
+    preview -> identify [label="jeśli nie ma korekty"];
+}
