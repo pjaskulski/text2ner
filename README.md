@@ -75,6 +75,8 @@ Z poziomu przycisku `Słowniki` użytkownik może otworzyć osobne okno konfigur
 - przymiotników miejscowych,
 - urzędów i funkcji.
 
+Słowniki te zawierają polskie odpowiedniki łacińskich, niemieckich nazw, które są wykorzystywane do tworzenia wariantów wyszukiwania w instancjach wikibase i polskiej wikipedii.
+
 W każdej zakładce można:
 
 - przeglądać aktualne pary `klucz -> wartość`,
@@ -88,6 +90,16 @@ Przy zapisie aplikacja:
 - odrzuca zduplikowane klucze,
 - tworzy kopię bezpieczeństwa pliku `*.bak`,
 - przeładowuje zapisany słownik w pamięci aplikacji bez potrzeby restartu serwera.
+
+Aplikacja posiada też szereg słowników wewnętrznych, obecnie niedostępnych dla użytkownika: 
+
+- ORG_NAME_SIGNAL_STEMS - służy do wykrywania, że jakaś fraza bardziej wygląda na instytucję niż na miejsce, po tagowaniu przez Gemini aplikacja robi jeszcze korektę i może przepisać oczywiste błędne placeName na orgName, jeśli tekst wygląda np. na nazwę organizacji kościelnej lub urzędu, a nie na rzeczywiste miejsce.
+
+- HUMAN_TYPE_MARKERS - "awaryjne" znaczniki typu „human”, „person”, „osoba”, „persona”. Przy filtrowaniu kandydatów z baz referencyjnych (instancji wikkibase) aplikacja weryfikuje czy dany element jest człowiekiem, robi to po QID (aplikacja ma listę elementów występujących w różnych wiki określających we właściwości instance of czy element jest człowiekiem np. Q5 w WikiHum), ale awaryjnie rozpoznaje także po etykiecie elementów w instance of porównując z tą listą
+
+- PLACE_TYPE_MARKERS -  lista znaczników dla miejsc i jednostek terytorialnych, działa jak lista HUMAN_TYPE_MARKERS, pomaga rozpoznać, że kandydat z bazy jest miejscem, regionem, krajem albo jednostką administracyjną
+
+- GENERIC_PLACE_SIGNAL_TOKENS -  aplikacja  podstawie tej listy odrzuca zbyt ogólne określenia (jak civitas, terra, regio, urbs), takie słowa są pomijane jako zbyt mało informacyjne. Dzięki temu aplikacja większą wagę przywiązuje do elementów bardziej konkretnych, na przykład nazw regionów, krajów, miast albo przymiotników typu „krakowski”, „pomorski”, „pruski”, zamiast opierać się na samych ogólnikach typu „miasto” czy „kraina”. 
 
 ### 2. Rozpoznanie encji w tekście
 
