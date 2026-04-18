@@ -1,7 +1,7 @@
 import os
 import re
 from functools import wraps
-from flask import Flask, render_template, request, jsonify, Response
+from flask import Flask, render_template, request, jsonify, Response, send_file
 from werkzeug.middleware.proxy_fix import ProxyFix
 from bs4 import BeautifulSoup
 from google import genai
@@ -78,6 +78,99 @@ def serialize_inner_xml(soup):
 def build_full_tei_xml(inner_xml):
     """Składa pełny dokument TEI z wewnętrznej treści body."""
     return f"{TEI_HEADER}\n{inner_xml}\n{TEI_FOOTER}"
+
+
+def get_diagnostic_log_dir():
+    """Zwraca bezpieczną, absolutną ścieżkę do katalogu z logami diagnostycznymi."""
+    return os.path.abspath(os.path.join(app.root_path, "log"))
+
+
+def resolve_safe_diagnostic_log_path(log_path):
+    """Waliduje ścieżkę logu i dopuszcza wyłącznie pliki z katalogu `log/` aplikacji."""
+    normalized_input = str(log_path or "").strip()
+    if not normalized_input:
+        raise ValueError("Brak ścieżki pliku logu.")
+
+    log_dir = get_diagnostic_log_dir()
+    candidate_path = normalized_input
+    if not os.path.isabs(candidate_path):
+        normalized_relative = os.path.normpath(candidate_path).lstrip(os.sep)
+        log_dir_name = os.path.basename(log_dir)
+        if normalized_relative == log_dir_name:
+            raise ValueError("Nieprawidłowa ścieżka pliku logu.")
+        log_prefix = f"{log_dir_name}{os.sep}"
+        if normalized_relative.startswith(log_prefix):
+            normalized_relative = normalized_relative[len(log_prefix):]
+        candidate_path = os.path.join(log_dir, normalized_relative)
+
+    resolved_path = os.path.abspath(candidate_path)
+    if not (resolved_path == log_dir or resolved_path.startswith(log_dir + os.sep)):
+        raise ValueError("Nieprawidłowa ścieżka pliku logu.")
+    if not os.path.isfile(resolved_path):
+        raise FileNotFoundError("Nie znaleziono wskazanego pliku logu.")
+    return resolved_path
+
+
+def extract_entity_log_snippet(log_path, entity_surface, entity_type):
+    """Wyciąga z pliku logu ciągły fragment dotyczący wskazanej encji."""
+    resolved_path = resolve_safe_diagnostic_log_path(log_path)
+    with open(resolved_path, "r", encoding="utf-8") as log_file:
+        lines = [line.rstrip("\n") for line in log_file]
+
+    entity_surface = normalize_whitespace(entity_surface)
+    entity_type = normalize_whitespace(entity_type)
+    if not entity_surface or entity_type not in {"persName", "placeName"}:
+        raise ValueError("Nieprawidłowe dane encji do podglądu logu.")
+
+    block_start_pattern = re.compile(
+        r"^\[TEXT2NER-DIAG\] (Analiza encji|Fallback analizy encji|Użyto cache dla encji) '(.+)' \((persName|placeName)\)"
+    )
+    generic_entity_pattern = re.compile(
+        r"^\[TEXT2NER-DIAG\] .*'(.+)' \((persName|placeName)\)"
+    )
+    validation_pattern = re.compile(
+        r"^\[TEXT2NER-DIAG\] Walidacja (persName|placeName) '(.+)':"
+    )
+    entity_reference = f"'{entity_surface}' ({entity_type})"
+    target_entity_key = (entity_surface, entity_type)
+
+    def extract_entity_key(line):
+        """Zwraca (surface, type) dla linii jawnie przypisanej do encji albo `None`."""
+        generic_match = generic_entity_pattern.match(line)
+        if generic_match:
+            return (
+                normalize_whitespace(generic_match.group(1)),
+                normalize_whitespace(generic_match.group(2)),
+            )
+
+        validation_match = validation_pattern.match(line)
+        if validation_match:
+            return (
+                normalize_whitespace(validation_match.group(2)),
+                normalize_whitespace(validation_match.group(1)),
+            )
+        return None
+
+    start_index = None
+    for index, line in enumerate(lines):
+        if entity_reference in line and block_start_pattern.match(line):
+            start_index = index
+            break
+
+    if start_index is None:
+        matching_lines = [line for line in lines if entity_reference in line]
+        if matching_lines:
+            return "\n".join(matching_lines)
+        raise ValueError("Nie znaleziono fragmentu logu dla wskazanej encji.")
+
+    end_index = len(lines)
+    for index in range(start_index + 1, len(lines)):
+        entity_key = extract_entity_key(lines[index])
+        if entity_key and entity_key != target_entity_key:
+            end_index = index
+            break
+
+    return "\n".join(lines[start_index:end_index]).strip()
 
 
 def extract_inner_xml_from_payload(xml_payload):
@@ -348,6 +441,38 @@ def process():
     finally:
         reset_current_gemini_model(model_token)
         stop_diagnostic_session()
+
+
+@app.route('/diagnostic-log/download', methods=['GET'])
+@requires_auth
+def download_diagnostic_log():
+    """Udostępnia do pobrania cały plik logu diagnostycznego dla bieżącej analizy."""
+    try:
+        log_path = resolve_safe_diagnostic_log_path(request.args.get('path', ''))
+        return send_file(
+            log_path,
+            mimetype='text/plain; charset=utf-8',
+            as_attachment=True,
+            download_name=os.path.basename(log_path),
+        )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route('/diagnostic-log/entity-snippet', methods=['POST'])
+@requires_auth
+def get_entity_diagnostic_log_snippet():
+    """Zwraca fragment logu dotyczący wskazanej encji zidentyfikowanej lub niezidentyfikowanej."""
+    try:
+        payload = request.json or {}
+        snippet = extract_entity_log_snippet(
+            payload.get('log_path', ''),
+            payload.get('entity_surface', ''),
+            payload.get('entity_type', ''),
+        )
+        return jsonify({"snippet": snippet})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
 
 
 # -------------------------------- MAIN ---------------------------------------

@@ -179,6 +179,10 @@
                     </div>
 
                     <div class="ml-auto flex gap-2">
+                        <button onclick="downloadDiagnosticLog()" id="btnDownloadLog" disabled
+                            class="text-sm bg-amber-100 text-amber-700 px-3 py-1.5 rounded-md hover:bg-amber-200 transition font-medium disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed">
+                            Pobierz log
+                        </button>
                         <button onclick="copyToClipboard()"
                             class="text-sm bg-blue-100 text-blue-700 px-3 py-1.5 rounded-md hover:bg-blue-200 transition font-medium">
                             Kopiuj XML
@@ -221,6 +225,29 @@
     <div id="tagContextMenu"
         class="hidden fixed z-50 min-w-[220px] rounded-lg border border-gray-200 bg-white shadow-xl py-1 text-sm">
         <div id="tagContextMenuItems"></div>
+    </div>
+
+    <div id="logSnippetModal"
+        class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+        <div class="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden">
+            <div class="p-6 border-b flex justify-between items-center">
+                <div>
+                    <h3 id="logSnippetTitle" class="text-xl font-bold text-gray-900">Fragment logu</h3>
+                    <p class="text-sm text-gray-500 mt-1">Zapis kroków diagnostycznych dotyczących wybranej encji.</p>
+                </div>
+                <button onclick="toggleLogSnippetModal(false)" class="text-gray-400 hover:text-gray-600">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
+                        stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+            <div class="p-6 bg-gray-50">
+                <pre id="logSnippetContent"
+                    class="border border-gray-200 rounded-lg bg-white p-4 overflow-x-auto overflow-y-auto max-h-[60vh] text-sm text-gray-700 whitespace-pre-wrap"></pre>
+            </div>
+        </div>
     </div>
 
     <div id="settingsModal"
@@ -405,6 +432,7 @@
         let currentResultTab = 'xml';
         let enabledRecognitionTagTypes = [...DEFAULT_ENABLED_RECOGNITION_TAG_TYPES];
         let selectedGeminiModel = DEFAULT_GEMINI_MODEL;
+        let currentDiagnosticLogFile = null;
 
         function parseXmlDocument(xml) {
             const parser = new DOMParser();
@@ -622,6 +650,10 @@
             document.getElementById('btnIdentify').disabled = !enabled;
         }
 
+        function setDiagnosticLogAvailable(available) {
+            document.getElementById('btnDownloadLog').disabled = !available;
+        }
+
         function renderXml(xml) {
             currentXmlHasDeclaration = String(xml || '').trim().startsWith('<?xml');
             currentXmlDoc = parseXmlDocument(xml);
@@ -656,6 +688,11 @@
                     <span class="text-xs font-bold uppercase ${e.type === 'persName' ? 'text-purple-600' : 'text-orange-600'}">${e.type}</span>
                     <p class="font-medium">${e.surface && e.surface !== e.name ? `${e.surface} (${e.name})` : e.name}</p>
                     <a href="${e.url}" target="_blank" class="text-sm text-blue-500 hover:underline break-all">${e.url}</a>
+                    <button type="button"
+                        class="mt-3 text-sm bg-slate-100 text-slate-700 px-3 py-1.5 rounded-md hover:bg-slate-200 transition font-medium"
+                        onclick="showEntityLogSnippet(decodeURIComponent('${encodeURIComponent(JSON.stringify({ surface: e.surface || e.name, name: e.name, type: e.type }))}'))">
+                        Pokaż log encji
+                    </button>
                 </div>
             `).join('');
 
@@ -667,6 +704,11 @@
                         <span class="text-xs font-bold uppercase ${e.type === 'persName' ? 'text-purple-600' : 'text-orange-600'}">${e.type}</span>
                         <p class="font-medium text-gray-900">${e.surface && e.surface !== e.name ? `${e.surface} (${e.name})` : e.name}</p>
                         <p class="text-sm text-gray-500">Nie przypisano identyfikatora referencyjnego.</p>
+                        <button type="button"
+                            class="mt-3 text-sm bg-white text-amber-800 px-3 py-1.5 rounded-md hover:bg-amber-100 transition font-medium"
+                            onclick="showEntityLogSnippet(decodeURIComponent('${encodeURIComponent(JSON.stringify({ surface: e.surface || e.name, name: e.name, type: e.type }))}'))">
+                            Pokaż log encji
+                        </button>
                     </div>
                 `).join('');
             } else {
@@ -682,6 +724,47 @@
 
         function renderWorkflowStatus(message) {
             document.getElementById('workflowStatus').textContent = message || '';
+        }
+
+        function toggleLogSnippetModal(show, title = 'Fragment logu', content = '') {
+            const modal = document.getElementById('logSnippetModal');
+            document.getElementById('logSnippetTitle').textContent = title;
+            document.getElementById('logSnippetContent').textContent = content;
+            if (show) {
+                modal.classList.remove('hidden');
+                document.body.style.overflow = 'hidden';
+                return;
+            }
+            modal.classList.add('hidden');
+            document.body.style.overflow = 'auto';
+        }
+
+        async function showEntityLogSnippet(entityPayload) {
+            if (!currentDiagnosticLogFile) {
+                alert('Brak dostępnego pliku logu dla bieżącej analizy.');
+                return;
+            }
+
+            const entity = JSON.parse(entityPayload);
+            try {
+                const response = await fetch("{{ url_for('get_entity_diagnostic_log_snippet') }}", {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        log_path: currentDiagnosticLogFile,
+                        entity_surface: entity.surface || entity.name,
+                        entity_type: entity.type,
+                    })
+                });
+                const data = await parseApiResponse(response, 'pobieranie fragmentu logu');
+                toggleLogSnippetModal(
+                    true,
+                    `Log encji: ${entity.surface && entity.surface !== entity.name ? `${entity.surface} (${entity.name})` : entity.name}`,
+                    data.snippet || 'Brak fragmentu logu dla wskazanej encji.'
+                );
+            } catch (err) {
+                alert(err.message || 'Nie udało się pobrać fragmentu logu.');
+            }
         }
 
         async function parseApiResponse(response, actionLabel) {
@@ -750,6 +833,7 @@
                 if (data.model_name) {
                     selectedGeminiModel = data.model_name;
                 }
+                currentDiagnosticLogFile = data.diagnostic_log_file || null;
 
                 renderXml(data.xml);
                 currentIdentificationPerformed = false;
@@ -758,6 +842,7 @@
                 document.getElementById('results').classList.remove('hidden');
                 switchTab(currentResultTab);
                 setIdentifyEnabled(true);
+                setDiagnosticLogAvailable(Boolean(currentDiagnosticLogFile));
             } catch (err) {
                 alert(err.message || "Błąd podczas rozpoznawania.");
             } finally {
@@ -785,6 +870,7 @@
                 if (data.model_name) {
                     selectedGeminiModel = data.model_name;
                 }
+                currentDiagnosticLogFile = data.diagnostic_log_file || null;
 
                 renderXml(data.xml);
                 currentIdentificationPerformed = true;
@@ -793,6 +879,7 @@
                 document.getElementById('results').classList.remove('hidden');
                 switchTab(currentResultTab);
                 setIdentifyEnabled(true);
+                setDiagnosticLogAvailable(Boolean(currentDiagnosticLogFile));
             } catch (err) {
                 alert(err.message || "Błąd podczas identyfikacji.");
             } finally {
@@ -827,8 +914,23 @@
             document.body.removeChild(a);
         }
 
+        function downloadDiagnosticLog() {
+            if (!currentDiagnosticLogFile) {
+                alert('Brak dostępnego pliku logu dla bieżącej analizy.');
+                return;
+            }
+            const downloadUrl = `{{ url_for('download_diagnostic_log') }}?path=${encodeURIComponent(currentDiagnosticLogFile)}`;
+            const a = document.createElement('a');
+            a.href = downloadUrl;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
+
         const docExamples = {
-            "nr-1": `Fridericus cardinalis consiliariis regni Poloniae.
+            "nr-1": `B. m. d. r. (Gniezno 17 lub 18 czerwca 1501).
+
+Fridericus cardinalis consiliariis regni Poloniae.
 
 Magnifice domine, amice noster dilecte! Ante biduum scripserant nobis domini consiliarii Regni, qui in Prussia sunt, de gravissima aegritudine sermi olim domini nostri, tamen de extremo fine vitae eius nihil significaverant, tantummodo vocabant nos, ut illuc accurreremus. Scripsissemus hanc ipsam novitatem iam tunc V. Mciae, sed voluimus expectare, ut aliquid certius illi significaremus. Nunc itaque hora vesperorum intelleximus, ipsum dominum nostrum diem clausisse extremum. Qui nunctius, sicut debuit, affecit nos dolore gravissimo, quem tamen, prout possumus et decet, conamur aequo animo tollerare et affectus nostros conformare divinae voluntati.
 
@@ -882,9 +984,11 @@ Sultan Bayazeth han, Dei gratia imperator Graeciae, Asiae atque Europae et mariu
             document.getElementById('unresolvedEntitySummary').classList.add('hidden');
             document.getElementById('workflowStatus').textContent = '';
             setIdentifyEnabled(false);
+            setDiagnosticLogAvailable(false);
             hideTagContextMenu();
             currentXmlDoc = null;
             currentIdentificationPerformed = false;
+            currentDiagnosticLogFile = null;
         }
 
         // funkcja Wyczyść
@@ -1205,11 +1309,15 @@ Sultan Bayazeth han, Dei gratia imperator Graeciae, Asiae atque Europae et mariu
         window.onclick = function(event) {
             const modal = document.getElementById('helpModal');
             const settingsModal = document.getElementById('settingsModal');
+            const logSnippetModal = document.getElementById('logSnippetModal');
             if (event.target == modal) {
                 toggleHelp(false);
             }
             if (event.target == settingsModal) {
                 toggleSettings(false);
+            }
+            if (event.target == logSnippetModal) {
+                toggleLogSnippetModal(false);
             }
             if (!event.target.closest('#tagContextMenu')) {
                 hideTagContextMenu();

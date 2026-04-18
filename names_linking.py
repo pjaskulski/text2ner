@@ -1460,8 +1460,6 @@ def build_candidate_from_entity(source_config, entity_id, entity, property_entit
         instance_of_texts.extend(class_labels)
         instance_of_texts.extend(class_descs)
 
-    birth_year, death_year = extract_person_life_years(entity, property_entities)
-
     candidate = {
         "id": entity_id,
         "source": source_config["source"],
@@ -1473,10 +1471,14 @@ def build_candidate_from_entity(source_config, entity_id, entity, property_entit
         "instance_of_ids": instance_of_ids,
         "instance_of_texts": _normalize_string_list(instance_of_texts, min_length=2),
         "claim_facts": build_claim_facts(entity, property_entities, referenced_entities),
-        "birth_year": birth_year,
-        "death_year": death_year,
+        "birth_year": None,
+        "death_year": None,
         "matched_queries": [],
     }
+    if candidate_is_human(candidate, source_config):
+        birth_year, death_year = extract_person_life_years(entity, property_entities)
+        candidate["birth_year"] = birth_year
+        candidate["death_year"] = death_year
     candidate["desc"] = get_best_lang_value(descriptions_map, "Brak opisu")
     return candidate
 
@@ -2427,8 +2429,16 @@ def candidate_name_quality(candidate, entity_analysis):
     return 0
 
 
+def should_use_temporal_matching(entity_analysis):
+    """Określa, czy dla danej encji chronologia powinna wpływać na ocenę kandydatów."""
+    return (entity_analysis or {}).get("tag_type") == "persName"
+
+
 def assess_candidate_temporal_fit(candidate, entity_analysis):
     """Ocena zgodności chronologicznej kandydata z latami z kontekstu."""
+    if not should_use_temporal_matching(entity_analysis):
+        return {"status": "not_applicable", "reason": "not_person_entity"}
+
     context_years = sorted(entity_analysis.get("context_years", []))
     if not context_years:
         return {"status": "unknown", "reason": "no_context_years"}
@@ -2512,8 +2522,25 @@ def format_candidate_temporal_log_line(candidate, entity_analysis):
     )
 
 
+def format_candidate_temporal_log_block(candidate, entity_analysis, position):
+    """Buduje wielowierszowy, czytelniejszy opis dopasowania chronologicznego kandydata."""
+    temporal = assess_candidate_temporal_fit(candidate, entity_analysis)
+    return "\n".join(
+        [
+            f"{position}. {candidate.get('name', '?')} [{candidate.get('source', '?')}:{candidate.get('id', '?')}]",
+            f"   life: {format_candidate_life_span(candidate)}",
+            f"   temporal: {temporal['status']}",
+            f"   reason: {temporal['reason']}",
+            f"   queries: {candidate.get('matched_queries', [])}",
+        ]
+    )
+
+
 def diagnostic_log_temporal_candidates(entity_analysis, tag_type, candidates, scope_label):
     """Zapisuje w logu zbiorczy obraz chronologii rozważanych kandydatów."""
+    if tag_type != "persName":
+        return
+
     context_years = entity_analysis.get("context_years", [])
     if not candidates:
         diagnostic_log(
@@ -2521,18 +2548,21 @@ def diagnostic_log_temporal_candidates(entity_analysis, tag_type, candidates, sc
         )
         return
 
+    formatted_candidates = "\n".join(
+        format_candidate_temporal_log_block(candidate, entity_analysis, position)
+        for position, candidate in enumerate(candidates[:12], start=1)
+    )
     diagnostic_log(
         f"Chronologia kandydatów dla '{entity_analysis['surface']}' ({tag_type}, {scope_label}), "
-        f"context_years={context_years}: " +
-        "; ".join(
-            format_candidate_temporal_log_line(candidate, entity_analysis)
-            for candidate in candidates[:12]
-        )
+        f"context_years={context_years}:\n{formatted_candidates}"
     )
 
 
 def candidate_temporal_rank(candidate, entity_analysis):
     """Zamienia ocenę chronologiczną na prosty ranking liczbowy."""
+    if not should_use_temporal_matching(entity_analysis):
+        return 0
+
     assessment = assess_candidate_temporal_fit(candidate, entity_analysis)
     if assessment["status"] == "compatible":
         return 2
@@ -2604,7 +2634,7 @@ def collect_candidates_from_sources(entity_analysis, tag_type, source_names):
 
 
 def collect_candidates(entity_analysis, context, tag_type):
-    """Zbiera kandydatów lokalnych; Wikidata jest dokładana później, jeśli lokalna identyfikacja zawiedzie."""
+    """Zbiera kandydatów ze źródeł specjalistycznych; Wikidata jest dokładana później, jeśli to nie wystarczy."""
     del context
     queries = build_query_plan(entity_analysis)
     diagnostic_log(
@@ -2621,14 +2651,14 @@ def collect_candidates(entity_analysis, context, tag_type):
             f"{candidate['source']}:{candidate['id']}" for candidate in local_candidates
         ]
         diagnostic_log(
-            f"Kandydaci lokalni dla '{entity_analysis['surface']}' ({tag_type}): "
+            f"Kandydaci ze źródeł specjalistycznych dla '{entity_analysis['surface']}' ({tag_type}): "
             f"{local_candidate_labels}"
         )
-        diagnostic_log_temporal_candidates(entity_analysis, tag_type, local_candidates, "lokalne")
+        diagnostic_log_temporal_candidates(entity_analysis, tag_type, local_candidates, "źródła specjalistyczne")
         return local_candidates[:12]
 
     diagnostic_log(
-        f"Brak kandydatów lokalnych dla '{entity_analysis['surface']}' ({tag_type}); "
+        f"Brak kandydatów ze źródeł specjalistycznych dla '{entity_analysis['surface']}' ({tag_type}); "
         f"fallback do Wikidata."
     )
 
@@ -2772,6 +2802,7 @@ def normalize_name_with_gemini(name, context, tag_type, document_years=None):
 
 def format_candidate_for_prompt(candidate, entity_analysis=None):
     """Formatuje kandydata do bogatego opisu przekazywanego modelowi Gemini."""
+    entity_analysis = entity_analysis or {}
     labels = extract_multilang_values(candidate.get("labels", {}))
     aliases = []
     for lang in ("pl", "la"):
@@ -2785,7 +2816,8 @@ def format_candidate_for_prompt(candidate, entity_analysis=None):
     matched_queries = candidate.get("matched_queries", [])
     birth_year = candidate.get("birth_year")
     death_year = candidate.get("death_year")
-    temporal_assessment = assess_candidate_temporal_fit(candidate, entity_analysis or {})
+    temporal_assessment = assess_candidate_temporal_fit(candidate, entity_analysis)
+    use_temporal_matching = should_use_temporal_matching(entity_analysis)
     life_span_text = []
     if birth_year is not None:
         life_span_text.append(f"ur. {birth_year}")
@@ -2794,59 +2826,147 @@ def format_candidate_for_prompt(candidate, entity_analysis=None):
     if not life_span_text:
         life_span_text = ["brak danych"]
 
-    return (
-        f"Źródło: {candidate['source']}\n"
-        f"ID: {candidate['id']}\n"
-        f"URL: {candidate['url']}\n"
-        f"Nazwa główna: {candidate['name']}\n"
-        f"Etykiety: {labels or ['brak']}\n"
-        f"Opisy: {descriptions or ['brak']}\n"
-        f"Aliasy: {aliases or ['brak']}\n"
-        f"Instance of: {instance_of_texts or ['brak']}\n"
-        f"Lata życia: {life_span_text}\n"
-        f"Ocena chronologiczna: {temporal_assessment['status']} ({temporal_assessment['reason']})\n"
-        f"Fakty z właściwości: {claim_facts or ['brak']}\n"
-        f"Tytuł Wikipedia: {wikipedia_title or 'brak'}\n"
-        f"Wikipedia lead ({candidate.get('wikipedia_source', 'brak')}): {wikipedia_lead or 'brak'}\n"
-        f"Zapytania, które dały wynik: {matched_queries or ['brak']}\n"
+    lines = [
+        f"Źródło: {candidate['source']}",
+        f"ID: {candidate['id']}",
+        f"URL: {candidate['url']}",
+        f"Nazwa główna: {candidate['name']}",
+        f"Etykiety: {labels or ['brak']}",
+        f"Opisy: {descriptions or ['brak']}",
+        f"Aliasy: {aliases or ['brak']}",
+        f"Instance of: {instance_of_texts or ['brak']}",
+    ]
+    if use_temporal_matching:
+        lines.append(f"Lata życia: {life_span_text}")
+        lines.append(
+            f"Ocena chronologiczna: {temporal_assessment['status']} ({temporal_assessment['reason']})"
+        )
+    else:
+        lines.append("Chronologia: nie dotyczy (encja nie jest osobą)")
+
+    lines.extend(
+        [
+            f"Fakty z właściwości: {claim_facts or ['brak']}",
+            f"Tytuł Wikipedia: {wikipedia_title or 'brak'}",
+            f"Wikipedia lead ({candidate.get('wikipedia_source', 'brak')}): {wikipedia_lead or 'brak'}",
+            f"Zapytania, które dały wynik: {matched_queries or ['brak']}",
+        ]
     )
+    return "\n".join(lines) + "\n"
+
+
+def normalize_gemini_candidate_selection(text):
+    """Porządkuje odpowiedź Gemini o wyborze kandydata do postaci ułatwiającej logowanie."""
+    raw_text = text or ""
+    cleaned = normalize_whitespace(raw_text)
+    fallback = {
+        "status": "unknown",
+        "selected_url": None,
+        "reason": "",
+        "matched_signals": [],
+        "raw_response": cleaned,
+    }
+    if not cleaned:
+        return fallback
+
+    if cleaned.upper() == "NONE":
+        fallback["status"] = "none"
+        fallback["reason"] = "Gemini nie znalazło kandydata pasującego wystarczająco dobrze."
+        return fallback
+
+    try:
+        parsed = parse_json_object(raw_text)
+    except Exception:
+        parsed = None
+
+    if isinstance(parsed, dict):
+        selected_url = normalize_whitespace(str(parsed.get("selected_url", "") or ""))
+        if selected_url.upper() == "NONE":
+            selected_url = ""
+        if selected_url and not re.match(r"^https?://", selected_url):
+            url_match = re.search(r"https?://\S+", selected_url)
+            selected_url = url_match.group(0).rstrip(".,);") if url_match else ""
+
+        matched_signals = _normalize_string_list(parsed.get("matched_signals", []), min_length=2)[:4]
+        reason = normalize_whitespace(parsed.get("reason", ""))
+        selection_status = "selected" if selected_url else "none"
+        return {
+            "status": selection_status,
+            "selected_url": selected_url or None,
+            "reason": reason,
+            "matched_signals": matched_signals,
+            "raw_response": cleaned,
+        }
+
+    url_match = re.search(r"https?://\S+", cleaned)
+    if url_match:
+        fallback["status"] = "selected"
+        fallback["selected_url"] = url_match.group(0).rstrip(".,);")
+        return fallback
+    return fallback
 
 
 def choose_candidate_with_gemini(name, context, tag_type, entity_analysis, candidates):
-    """Prosi Gemini o wybór najlepszego kandydata albo zwrot `NONE`."""
+    """Prosi Gemini o wybór najlepszego kandydata i zapisuje zwięzłe uzasadnienie wyboru."""
     if not candidates:
-        return None
+        return {
+            "selected_url": None,
+            "reason": "",
+            "matched_signals": [],
+            "raw_response": "",
+        }
 
     candidate_blocks = []
     for idx, candidate in enumerate(candidates[:12], start=1):
         candidate_blocks.append(f"OPCJA {idx}\n{format_candidate_for_prompt(candidate, entity_analysis)}")
     candidates_text = "\n\n".join(candidate_blocks)
 
+    if tag_type == "persName":
+        extra_clues_block = (
+            f"Funkcje/urzędy: {entity_analysis.get('office_terms', [])}\n"
+            f"Wskazówki miejscowe: {entity_analysis.get('place_terms', [])}\n"
+            f"Lata wykryte w kontekście: {entity_analysis.get('context_years', [])}\n"
+        )
+        type_specific_rules = (
+            "2. Dla persName wybieraj wyłącznie człowieka, zgodnego z kontekstem.\n"
+            "3. Dla persName uwzględnij zgodność chronologiczną: kandydat żyjący wyraźnie przed lub po latach z kontekstu powinien być odrzucany.\n"
+        )
+    else:
+        extra_clues_block = (
+            f"Wskazówki miejscowe: {entity_analysis.get('place_terms', [])}\n"
+            f"Relacje i fakty z kontekstu: {entity_analysis.get('context_clues', [])}\n"
+        )
+        type_specific_rules = (
+            "2. Dla placeName wybieraj wyłącznie miejsce, kraj, region lub jednostkę administracyjną zgodną z kontekstem.\n"
+            "3. Nie używaj kryteriów biograficznych ani chronologii osoby; liczą się przede wszystkim relacje przestrzenne, jednostki nadrzędne, aliasy i opisy.\n"
+        )
+
     prompt = f"""
-Zadanie: wybierz najlepszą encję referencyjną dla encji historycznej z tekstu albo zwróć NONE.
+Zadanie: wybierz najlepszą encję referencyjną dla encji historycznej z tekstu albo wskaż brak rozstrzygnięcia.
 
 Typ encji: {tag_type}
 Forma z tekstu: "{name}"
 Forma znormalizowana do wyszukiwania: "{entity_analysis.get('normalized_best', name)}"
 Kontekst zdania/akapitu: "{context}"
 Wskazówki z kontekstu: {entity_analysis.get('context_clues', [])}
-Funkcje/urzędy: {entity_analysis.get('office_terms', [])}
-Wskazówki miejscowe: {entity_analysis.get('place_terms', [])}
-Lata wykryte w kontekście: {entity_analysis.get('context_years', [])}
+{extra_clues_block}
 
 ZASADY:
 1. Nie zgaduj na siłę.
-2. Dla persName wybieraj wyłącznie człowieka, zgodnego z kontekstem.
-3. Dla placeName wybieraj wyłącznie miejsce, kraj, region lub jednostkę administracyjną zgodną z kontekstem.
-4. Dla persName uwzględnij zgodność chronologiczną: kandydat żyjący wyraźnie przed lub po latach z kontekstu powinien być odrzucany.
-5. Uwzględnij formę łacińską, mianownik, opisy, etykiety, aliasy, instance of i fakty z właściwości.
-6. Jeśli żaden kandydat nie pasuje wystarczająco dobrze, zwróć dokładnie NONE.
-7. Jeśli jedna opcja pasuje wyraźnie najlepiej, zwróć wyłącznie jej pełny URL.
+{type_specific_rules}4. Uwzględnij formę łacińską, mianownik, opisy, etykiety, aliasy, instance of i fakty z właściwości.
+5. Jeśli żaden kandydat nie pasuje wystarczająco dobrze, ustaw "selected_url" na "NONE".
+6. Jeśli jedna opcja pasuje wyraźnie najlepiej, wskaż jej pełny URL.
+7. Uzasadnienie ma być krótkie i oparte wyłącznie na danych z kontekstu i z opisów kandydatów.
 
 Kandydaci:
 {candidates_text}
 
-Zwróć tylko pełny URL wybranego kandydata albo dokładnie NONE.
+Zwróć wyłącznie JSON w postaci:
+{{
+  "selected_url": "pełny URL wybranego kandydata" lub "NONE",
+  "reason": "krótkie uzasadnienie wyboru albo odrzucenia wszystkich kandydatów",
+  "matched_signals": ["maksymalnie 3 krótkie sygnały, które zadecydowały o wyborze"]
+}}
     """
 
     try:
@@ -2860,26 +2980,31 @@ Zwróć tylko pełny URL wybranego kandydata albo dokładnie NONE.
             contents=prompt,
             config=config,
         )
-        result = normalize_whitespace(response.text)
-        if result.upper() == "NONE":
+        selection = normalize_gemini_candidate_selection(response.text)
+        selection_status = selection.get("status", "unknown")
+        selected_url = selection.get("selected_url")
+        reason = selection.get("reason")
+        matched_signals = selection.get("matched_signals", [])
+        if selection_status == "selected" and selected_url:
+            return selection
+        if selection_status == "none":
             diagnostic_log(
-                f"Gemini nie wybrało kandydata dla '{name}' ({tag_type})."
+                f"Gemini nie wybrało kandydata dla '{name}' ({tag_type}); "
+                f"reason={reason or 'brak'}; matched_signals={matched_signals or ['brak']}"
             )
-            return None
-        url_match = re.search(r"https?://\S+", result)
-        if url_match:
-            selected_url = url_match.group(0).rstrip(".,);")
-            diagnostic_log(
-                f"Gemini wybrało dla '{name}' ({tag_type}): {selected_url}"
-            )
-            return selected_url
+            return selection
         diagnostic_log(
-            f"Gemini zwróciło nieoczekiwany wynik dla '{name}' ({tag_type}): {result}"
+            f"Gemini zwróciło nieoczekiwany wynik dla '{name}' ({tag_type}): {selection.get('raw_response', '')}"
         )
-        return None
+        return selection
     except Exception as exc:
         print(f"Błąd Gemini przy identyfikacji {name}: {exc}")
-        return None
+        return {
+            "selected_url": None,
+            "reason": "",
+            "matched_signals": [],
+            "raw_response": "",
+        }
 
 
 def ask_gemini_to_disambiguate(name, name_n, context, candidates, entity_analysis=None):
@@ -2888,7 +3013,8 @@ def ask_gemini_to_disambiguate(name, name_n, context, candidates, entity_analysi
     tag_type = "persName"
     if entity_analysis and entity_analysis.get("entity_type") == "place":
         tag_type = "placeName"
-    return choose_candidate_with_gemini(name, context, tag_type, entity_analysis or {}, candidates)
+    selection = choose_candidate_with_gemini(name, context, tag_type, entity_analysis or {}, candidates)
+    return selection.get("selected_url")
 
 
 def build_link_decision(name, context, tag_type, entity_analysis, candidates):
@@ -2914,32 +3040,44 @@ def build_link_decision(name, context, tag_type, entity_analysis, candidates):
                 f"Błąd wzbogacania kandydatów Wikipedią dla '{name}' ({tag_type}): {exc}"
             )
 
-    selected_url = choose_candidate_with_gemini(
+    selection = choose_candidate_with_gemini(
         name,
         context,
         tag_type,
         entity_analysis,
         candidates,
     )
+    selected_url = selection.get("selected_url")
     if selected_url:
         selected_candidate = next(
             (candidate for candidate in candidates if candidate.get("url") == selected_url),
             None
         )
         if selected_candidate is not None:
+            selection_reason = normalize_whitespace(selection.get("reason", ""))
+            matched_signals = selection.get("matched_signals", [])
             diagnostic_log(
                 f"Wybrany kandydat dla '{name}' ({tag_type}): "
                 f"{format_candidate_temporal_log_line(selected_candidate, entity_analysis)}"
             )
+            if selection_reason or matched_signals:
+                diagnostic_log(
+                    f"Uzasadnienie Gemini dla '{name}' ({tag_type}): "
+                    f"reason={selection_reason or 'brak'}; matched_signals={matched_signals or ['brak']}"
+                )
         return {
             "status": "selected",
             "selected_url": selected_url,
             "reason": "gemini_selected",
+            "selection_reason": selection.get("reason", ""),
+            "matched_signals": selection.get("matched_signals", []),
         }
     return {
         "status": "none",
         "selected_url": None,
         "reason": "gemini_none",
+        "selection_reason": selection.get("reason", ""),
+        "matched_signals": selection.get("matched_signals", []),
     }
 
 
@@ -2961,7 +3099,7 @@ def link_entity(name, context, tag_type, document_years=None):
 
     if should_retry_with_wikidata:
         diagnostic_log(
-            f"Lokalni kandydaci dla '{name}' ({tag_type}) nie zostali wybrani; "
+            f"Kandydaci ze źródeł specjalistycznych dla '{name}' ({tag_type}) nie zostali wybrani; "
             f"ponawiam identyfikację tylko na kandydatach z Wikidaty."
         )
         candidates = collect_wikidata_only_candidates(entity_analysis, tag_type)
