@@ -1,1 +1,1 @@
-TEXT2NER_DIAGNOSTIC=1 python app.py
+python app.py

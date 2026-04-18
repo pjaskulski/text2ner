@@ -2,7 +2,7 @@ import json
 import os
 import re
 from contextvars import ContextVar
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import requests
 from bs4 import BeautifulSoup
@@ -13,7 +13,6 @@ from google.genai import types
 
 load_dotenv()
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-TEXT2NER_DIAGNOSTIC = os.environ.get("TEXT2NER_DIAGNOSTIC", "").strip().lower() in {"1", "true", "yes", "on"}
 DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite-preview"
 SUPPORTED_GEMINI_MODELS = {
     "gemini-3.1-flash-lite-preview": "Gemini 3.1 Flash Lite Preview",
@@ -30,6 +29,7 @@ DEFAULT_ENABLED_TAG_TYPES = ("persName", "placeName", "date", "roleName")
 client = genai.Client(api_key=GEMINI_API_KEY)
 CURRENT_DIAGNOSTIC_LOG_PATH = ContextVar("CURRENT_DIAGNOSTIC_LOG_PATH", default=None)
 CURRENT_GEMINI_MODEL = ContextVar("CURRENT_GEMINI_MODEL", default=DEFAULT_GEMINI_MODEL)
+DIAGNOSTIC_LOG_RETENTION_HOURS = 48
 
 
 WIKIBASE_SOURCES = {
@@ -396,9 +396,39 @@ def escape_sparql_string_literal(value):
     return str(value or "").replace("\\", "\\\\").replace('"', '\\"')
 
 
+def purge_expired_diagnostic_logs(log_dir, retention_hours=DIAGNOSTIC_LOG_RETENTION_HOURS):
+    """Usuwa pliki `.log` starsze niż zadany próg retencji i zwraca podsumowanie operacji."""
+    cutoff = datetime.now() - timedelta(hours=retention_hours)
+    removed_files = []
+    failed_files = []
+
+    for entry in os.scandir(log_dir):
+        if not entry.is_file() or not entry.name.endswith(".log"):
+            continue
+        try:
+            modified_at = datetime.fromtimestamp(entry.stat().st_mtime)
+        except OSError:
+            failed_files.append(entry.name)
+            continue
+        if modified_at >= cutoff:
+            continue
+        try:
+            os.remove(entry.path)
+            removed_files.append(entry.name)
+        except OSError:
+            failed_files.append(entry.name)
+
+    return {
+        "removed_files": removed_files,
+        "failed_files": failed_files,
+        "retention_hours": retention_hours,
+    }
+
+
 def start_diagnostic_session(log_dir="log"):
     """Tworzy plik logu dla pojedynczego uruchomienia analizy i ustawia go jako aktywny."""
     os.makedirs(log_dir, exist_ok=True)
+    cleanup_summary = purge_expired_diagnostic_logs(log_dir)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_path = os.path.join(log_dir, f"{timestamp}.log")
     counter = 1
@@ -411,6 +441,18 @@ def start_diagnostic_session(log_dir="log"):
             f"[TEXT2NER-DIAG] Start analizy: {datetime.now().isoformat(timespec='seconds')}\n"
         )
     CURRENT_DIAGNOSTIC_LOG_PATH.set(log_path)
+    removed_count = len(cleanup_summary["removed_files"])
+    failed_count = len(cleanup_summary["failed_files"])
+    if removed_count:
+        diagnostic_log(
+            f"Usunięto {removed_count} plik(ów) logu starszych niż "
+            f"{cleanup_summary['retention_hours']} godzin."
+        )
+    if failed_count:
+        diagnostic_log(
+            f"Nie udało się usunąć {failed_count} przeterminowanych plików logu: "
+            f"{cleanup_summary['failed_files']}"
+        )
     return log_path
 
 
@@ -421,14 +463,13 @@ def stop_diagnostic_session():
 
 def diagnostic_log(message):
     """Zapisuje komunikat diagnostyczny do pliku sesji albo na stdout."""
-    if TEXT2NER_DIAGNOSTIC:
-        line = f"[TEXT2NER-DIAG] {message}"
-        log_path = CURRENT_DIAGNOSTIC_LOG_PATH.get()
-        if log_path:
-            with open(log_path, "a", encoding="utf-8") as log_file:
-                log_file.write(f"{line}\n")
-        else:
-            print(line)
+    line = f"[TEXT2NER-DIAG] {message}"
+    log_path = CURRENT_DIAGNOSTIC_LOG_PATH.get()
+    if log_path:
+        with open(log_path, "a", encoding="utf-8") as log_file:
+            log_file.write(f"{line}\n")
+    else:
+        print(line)
 
 
 def normalize_enabled_tag_types(tag_types):
