@@ -102,6 +102,17 @@
                     </svg>
                     Parametry
                 </button>
+                <button onclick="toggleDictionaryModal(true)"
+                    class="flex items-center gap-2 px-4 py-2 bg-amber-600 text-white text-xs font-bold rounded-lg hover:bg-amber-700 transition-colors shadow-sm">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24"
+                        stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M4 6.5A2.5 2.5 0 016.5 4H20v16H6.5A2.5 2.5 0 014 17.5v-11z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M8 8h8M8 12h8M8 16h5" />
+                    </svg>
+                    Słowniki
+                </button>
                 <button onclick="toggleHelp(true)" class="flex items-center gap-2 px-4 py-2 bg-green-600 text-white text-xs font-bold rounded-lg hover:bg-green-700 transition-colors shadow-sm">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -330,6 +341,62 @@
         </div>
     </div>
 
+    <div id="dictionaryModal"
+        class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+        <div class="bg-white rounded-xl shadow-2xl max-w-5xl w-full max-h-[90vh] overflow-hidden">
+            <div class="p-6 border-b flex justify-between items-center">
+                <div>
+                    <h3 class="text-xl font-bold text-gray-900">Słowniki konfiguracyjne</h3>
+                    <p class="text-sm text-gray-500 mt-1">Edytuj słowniki merytoryczne używane przy rozpoznawaniu i identyfikacji encji.</p>
+                </div>
+                <button onclick="toggleDictionaryModal(false)" class="text-gray-400 hover:text-gray-600">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
+                        stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+            <div class="p-6 bg-gray-50 border-b">
+                <div id="dictionaryTabs" class="flex flex-wrap gap-2"></div>
+            </div>
+            <div class="p-6 space-y-4 overflow-y-auto max-h-[58vh]">
+                <div>
+                    <h4 id="dictionaryTitle" class="text-lg font-semibold text-gray-900">Ładowanie słownika...</h4>
+                    <p id="dictionaryDescription" class="text-sm text-gray-500 mt-1"></p>
+                </div>
+                <div class="border rounded-lg overflow-hidden">
+                    <div class="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_100px] bg-gray-100 text-xs font-bold uppercase text-gray-500">
+                        <div class="px-4 py-3 border-r">Klucz</div>
+                        <div class="px-4 py-3 border-r">Wartość</div>
+                        <div class="px-4 py-3 text-center">Akcja</div>
+                    </div>
+                    <div id="dictionaryRows" class="divide-y divide-gray-200 bg-white"></div>
+                </div>
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                    <button type="button" onclick="addDictionaryRow()"
+                        class="px-4 py-2 bg-white border text-gray-700 rounded-lg font-medium hover:bg-gray-50">
+                        Dodaj wiersz
+                    </button>
+                    <p class="text-sm text-gray-500">
+                        Przy zapisie tworzona jest kopia bezpieczeństwa pliku <code>.bak</code>.
+                    </p>
+                </div>
+                <p id="dictionaryStatus" class="text-sm text-gray-500"></p>
+            </div>
+            <div class="p-6 border-t bg-gray-50 flex justify-end gap-2">
+                <button onclick="toggleDictionaryModal(false)"
+                    class="px-4 py-2 bg-white border text-gray-700 rounded-lg font-medium hover:bg-gray-50">
+                    Zamknij
+                </button>
+                <button id="btnSaveDictionaries" onclick="saveDictionaryConfigs()"
+                    class="px-4 py-2 bg-amber-600 text-white rounded-lg font-bold hover:bg-amber-700 shadow-sm">
+                    Zapisz słowniki
+                </button>
+            </div>
+        </div>
+    </div>
+
     <div id="helpModal"
         class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
         <div class="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
@@ -433,6 +500,9 @@
         let enabledRecognitionTagTypes = [...DEFAULT_ENABLED_RECOGNITION_TAG_TYPES];
         let selectedGeminiModel = DEFAULT_GEMINI_MODEL;
         let currentDiagnosticLogFile = null;
+        let dictionaryDefinitions = [];
+        let editableDictionaryData = {};
+        let activeDictionaryKey = null;
 
         function parseXmlDocument(xml) {
             const parser = new DOMParser();
@@ -528,6 +598,15 @@
             document.getElementById('tagContextMenuItems').innerHTML = '';
         }
 
+        function refreshBodyOverflow() {
+            const modalIds = ['helpModal', 'settingsModal', 'logSnippetModal', 'dictionaryModal'];
+            const hasVisibleModal = modalIds.some(modalId => {
+                const modal = document.getElementById(modalId);
+                return modal && !modal.classList.contains('hidden');
+            });
+            document.body.style.overflow = hasVisibleModal ? 'hidden' : 'auto';
+        }
+
         function syncTagSettingsFormFromState() {
             TAG_SETTINGS_OPTIONS.forEach(option => {
                 const checkbox = document.getElementById(`tag-toggle-${option.value}`);
@@ -555,11 +634,11 @@
             if (show) {
                 syncTagSettingsFormFromState();
                 modal.classList.remove('hidden');
-                document.body.style.overflow = 'hidden';
+                refreshBodyOverflow();
                 return;
             }
             modal.classList.add('hidden');
-            document.body.style.overflow = 'auto';
+            refreshBodyOverflow();
         }
 
         function saveTagSettings() {
@@ -579,6 +658,277 @@
 
             if (document.getElementById('xmlOutput').textContent.trim()) {
                 renderWorkflowStatus('Parametry analizy zostały zmienione. Obecny wynik pozostaje bez zmian, ale nowe ustawienia zostaną użyte przy następnym uruchomieniu rozpoznawania i identyfikacji encji.');
+            }
+        }
+
+        function getDictionaryDefinition(dictionaryKey) {
+            return dictionaryDefinitions.find(definition => definition.key === dictionaryKey) || null;
+        }
+
+        function cloneDictionaryEntries(entries) {
+            if (!Array.isArray(entries)) {
+                return [];
+            }
+            return entries.map(entry => ({
+                key: String(entry?.key || ''),
+                value: String(entry?.value || ''),
+            }));
+        }
+
+        function getDictionaryEntryCount(dictionaryKey) {
+            const entries = Array.isArray(editableDictionaryData[dictionaryKey])
+                ? editableDictionaryData[dictionaryKey]
+                : [];
+            return entries.filter(entry => String(entry.key || '').trim() || String(entry.value || '').trim()).length;
+        }
+
+        function ensureDictionaryRows(dictionaryKey, includeBlankRow = false) {
+            if (!dictionaryKey) {
+                return [];
+            }
+            if (!Array.isArray(editableDictionaryData[dictionaryKey])) {
+                editableDictionaryData[dictionaryKey] = [];
+            }
+            editableDictionaryData[dictionaryKey] = editableDictionaryData[dictionaryKey].map(entry => ({
+                key: String(entry?.key || ''),
+                value: String(entry?.value || ''),
+            }));
+            if (includeBlankRow && editableDictionaryData[dictionaryKey].length === 0) {
+                editableDictionaryData[dictionaryKey].push({ key: '', value: '' });
+            }
+            return editableDictionaryData[dictionaryKey];
+        }
+
+        function escapeHtml(value) {
+            return String(value || '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function renderDictionaryStatus(message = '', tone = 'neutral') {
+            const statusEl = document.getElementById('dictionaryStatus');
+            const toneClasses = {
+                neutral: 'text-gray-500',
+                success: 'text-green-700',
+                error: 'text-red-600',
+            };
+            statusEl.textContent = message;
+            statusEl.className = `text-sm min-h-[1.25rem] ${toneClasses[tone] || toneClasses.neutral}`;
+        }
+
+        function setDictionarySaveLoading(loading) {
+            const button = document.getElementById('btnSaveDictionaries');
+            if (!button.dataset.defaultLabel) {
+                button.dataset.defaultLabel = button.textContent.trim();
+            }
+            button.disabled = loading;
+            button.textContent = loading ? 'Zapisywanie...' : button.dataset.defaultLabel;
+            button.classList.toggle('opacity-70', loading);
+            button.classList.toggle('cursor-not-allowed', loading);
+        }
+
+        function renderDictionaryTabs() {
+            const tabsContainer = document.getElementById('dictionaryTabs');
+            if (!dictionaryDefinitions.length) {
+                tabsContainer.innerHTML = '';
+                return;
+            }
+
+            tabsContainer.innerHTML = dictionaryDefinitions.map(definition => {
+                const isActive = definition.key === activeDictionaryKey;
+                const count = getDictionaryEntryCount(definition.key);
+                const activeClasses = isActive
+                    ? 'bg-amber-600 text-white shadow-sm'
+                    : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-100';
+                return `
+                    <button type="button"
+                        onclick="switchDictionaryTab('${definition.key}')"
+                        class="px-3 py-2 rounded-lg text-sm font-semibold transition ${activeClasses}">
+                        ${escapeHtml(definition.title)} <span class="opacity-80">(${count})</span>
+                    </button>
+                `;
+            }).join('');
+        }
+
+        function renderDictionaryRows() {
+            const titleEl = document.getElementById('dictionaryTitle');
+            const descriptionEl = document.getElementById('dictionaryDescription');
+            const rowsContainer = document.getElementById('dictionaryRows');
+            const activeDefinition = getDictionaryDefinition(activeDictionaryKey);
+
+            if (!activeDefinition) {
+                titleEl.textContent = 'Brak słownika';
+                descriptionEl.textContent = 'Nie udało się odnaleźć konfiguracji słownika.';
+                rowsContainer.innerHTML = `
+                    <div class="px-4 py-6 text-sm text-gray-500">
+                        Brak danych do wyświetlenia.
+                    </div>
+                `;
+                return;
+            }
+
+            titleEl.textContent = `${activeDefinition.title} (${activeDefinition.filename})`;
+            descriptionEl.textContent = activeDefinition.description || '';
+
+            const entries = ensureDictionaryRows(activeDictionaryKey, true);
+            rowsContainer.innerHTML = entries.map((entry, index) => `
+                <div class="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_100px]">
+                    <div class="border-r">
+                        <input type="text"
+                            value="${escapeHtml(entry.key)}"
+                            oninput="updateDictionaryEntry(${index}, 'key', this.value)"
+                            class="w-full px-4 py-3 outline-none focus:ring-2 focus:ring-amber-500"
+                            placeholder="np. cracovia">
+                    </div>
+                    <div class="border-r">
+                        <input type="text"
+                            value="${escapeHtml(entry.value)}"
+                            oninput="updateDictionaryEntry(${index}, 'value', this.value)"
+                            class="w-full px-4 py-3 outline-none focus:ring-2 focus:ring-amber-500"
+                            placeholder="np. kraków">
+                    </div>
+                    <div class="flex items-center justify-center px-2">
+                        <button type="button"
+                            onclick="removeDictionaryRow(${index})"
+                            class="px-3 py-1.5 text-sm rounded-md bg-red-50 text-red-600 hover:bg-red-100">
+                            Usuń
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function switchDictionaryTab(dictionaryKey) {
+            if (!getDictionaryDefinition(dictionaryKey)) {
+                return;
+            }
+            activeDictionaryKey = dictionaryKey;
+            renderDictionaryTabs();
+            renderDictionaryRows();
+            renderDictionaryStatus('');
+        }
+
+        function updateDictionaryEntry(index, field, value) {
+            const entries = ensureDictionaryRows(activeDictionaryKey, true);
+            if (!entries[index] || !['key', 'value'].includes(field)) {
+                return;
+            }
+            entries[index][field] = value;
+            renderDictionaryTabs();
+        }
+
+        function removeDictionaryRow(index) {
+            const entries = ensureDictionaryRows(activeDictionaryKey, false);
+            if (!entries[index]) {
+                return;
+            }
+            entries.splice(index, 1);
+            renderDictionaryTabs();
+            renderDictionaryRows();
+            renderDictionaryStatus('');
+        }
+
+        function addDictionaryRow() {
+            const entries = ensureDictionaryRows(activeDictionaryKey, false);
+            entries.push({ key: '', value: '' });
+            renderDictionaryTabs();
+            renderDictionaryRows();
+            renderDictionaryStatus('');
+        }
+
+        async function loadDictionaryConfigs() {
+            const response = await fetch("{{ url_for('get_dictionary_configs') }}");
+            const data = await parseApiResponse(response, 'pobieranie słowników');
+
+            dictionaryDefinitions = Array.isArray(data.definitions) ? data.definitions : [];
+            const rawDictionaries = data.dictionaries && typeof data.dictionaries === 'object'
+                ? data.dictionaries
+                : {};
+
+            editableDictionaryData = {};
+            dictionaryDefinitions.forEach(definition => {
+                editableDictionaryData[definition.key] = cloneDictionaryEntries(rawDictionaries[definition.key]);
+            });
+
+            if (!dictionaryDefinitions.length) {
+                activeDictionaryKey = null;
+                renderDictionaryTabs();
+                renderDictionaryRows();
+                renderDictionaryStatus('Brak słowników dostępnych do edycji.', 'error');
+                return;
+            }
+
+            if (!getDictionaryDefinition(activeDictionaryKey)) {
+                activeDictionaryKey = dictionaryDefinitions[0].key;
+            }
+
+            renderDictionaryTabs();
+            renderDictionaryRows();
+            renderDictionaryStatus('Załadowano aktualne pliki słowników.');
+        }
+
+        async function toggleDictionaryModal(show) {
+            const modal = document.getElementById('dictionaryModal');
+            if (show) {
+                modal.classList.remove('hidden');
+                renderDictionaryStatus('Ładowanie słowników...');
+                refreshBodyOverflow();
+                try {
+                    await loadDictionaryConfigs();
+                } catch (err) {
+                    renderDictionaryStatus(err.message || 'Nie udało się pobrać słowników.', 'error');
+                }
+                return;
+            }
+
+            modal.classList.add('hidden');
+            renderDictionaryStatus('');
+            refreshBodyOverflow();
+        }
+
+        async function saveDictionaryConfigs() {
+            if (!dictionaryDefinitions.length) {
+                renderDictionaryStatus('Brak słowników do zapisania.', 'error');
+                return;
+            }
+
+            setDictionarySaveLoading(true);
+            renderDictionaryStatus('Zapisywanie zmian do plików JSON...');
+
+            try {
+                const response = await fetch("{{ url_for('save_dictionary_configs') }}", {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        dictionaries: editableDictionaryData,
+                    })
+                });
+                const data = await parseApiResponse(response, 'zapis słowników');
+
+                dictionaryDefinitions = Array.isArray(data.definitions) ? data.definitions : [];
+                const rawDictionaries = data.dictionaries && typeof data.dictionaries === 'object'
+                    ? data.dictionaries
+                    : {};
+
+                editableDictionaryData = {};
+                dictionaryDefinitions.forEach(definition => {
+                    editableDictionaryData[definition.key] = cloneDictionaryEntries(rawDictionaries[definition.key]);
+                });
+
+                if (!getDictionaryDefinition(activeDictionaryKey) && dictionaryDefinitions.length) {
+                    activeDictionaryKey = dictionaryDefinitions[0].key;
+                }
+
+                renderDictionaryTabs();
+                renderDictionaryRows();
+                renderDictionaryStatus(data.message || 'Słowniki zostały zapisane.', 'success');
+            } catch (err) {
+                renderDictionaryStatus(err.message || 'Nie udało się zapisać słowników.', 'error');
+            } finally {
+                setDictionarySaveLoading(false);
             }
         }
 
@@ -732,11 +1082,11 @@
             document.getElementById('logSnippetContent').textContent = content;
             if (show) {
                 modal.classList.remove('hidden');
-                document.body.style.overflow = 'hidden';
+                refreshBodyOverflow();
                 return;
             }
             modal.classList.add('hidden');
-            document.body.style.overflow = 'auto';
+            refreshBodyOverflow();
         }
 
         async function showEntityLogSnippet(entityPayload) {
@@ -1298,10 +1648,10 @@ Sultan Bayazeth han, Dei gratia imperator Graeciae, Asiae atque Europae et mariu
             const modal = document.getElementById('helpModal');
             if (show) {
                 modal.classList.remove('hidden');
-                document.body.style.overflow = 'hidden'; // Blokuje przewijanie strony pod spodem
+                refreshBodyOverflow(); // Blokuje przewijanie strony pod spodem
             } else {
                 modal.classList.add('hidden');
-                document.body.style.overflow = 'auto'; // Przywraca przewijanie
+                refreshBodyOverflow(); // Przywraca przewijanie
             }
         }
 
@@ -1309,12 +1659,16 @@ Sultan Bayazeth han, Dei gratia imperator Graeciae, Asiae atque Europae et mariu
         window.onclick = function(event) {
             const modal = document.getElementById('helpModal');
             const settingsModal = document.getElementById('settingsModal');
+            const dictionaryModal = document.getElementById('dictionaryModal');
             const logSnippetModal = document.getElementById('logSnippetModal');
             if (event.target == modal) {
                 toggleHelp(false);
             }
             if (event.target == settingsModal) {
                 toggleSettings(false);
+            }
+            if (event.target == dictionaryModal) {
+                toggleDictionaryModal(false);
             }
             if (event.target == logSnippetModal) {
                 toggleLogSnippetModal(false);

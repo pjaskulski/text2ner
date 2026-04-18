@@ -24,6 +24,11 @@ W praktyce oznacza to, że z nieopracowanego tekstu źródłowego powstaje:
 - lista encji, których nie udało się wiarygodnie powiązać z rekordem referencyjnym,
 - log diagnostyczny bieżącego przebiegu rozpoznawania albo identyfikacji.
 
+Interfejs WWW udostępnia obecnie także dwa dodatkowe obszary konfiguracji:
+
+- okno `Parametry`, w którym można wybrać model Gemini i zakres rozpoznawanych tagów,
+- okno `Słowniki`, w którym można edytować wybrane słowniki pomocnicze bez ingerencji w kod programu.
+
 ## Ogólny model działania
 
 Przetwarzanie wykorzystuje modele językowe i referencyjne bazy wiedzy:
@@ -60,6 +65,29 @@ Przed uruchomieniem rozpoznawania użytkownik może w oknie `Parametry`:
 - włączyć lub wyłączyć typy tagów rozpoznawania: domyślny zestaw to `persName`, `placeName`, `date` i `roleName`, można rozszerzyć go o `orgName`.
 
 Ustawienia są używane przy kolejnym uruchomieniu rozpoznawania, a wybrany model jest również przekazywany do etapu identyfikacji.
+
+### 1a. Edycja słowników pomocniczych
+
+Z poziomu przycisku `Słowniki` użytkownik może otworzyć osobne okno konfiguracyjne z czterema zakładkami odpowiadającymi czterem słownikom pomocniczym:
+
+- osób,
+- miejsc,
+- przymiotników miejscowych,
+- urzędów i funkcji.
+
+W każdej zakładce można:
+
+- przeglądać aktualne pary `klucz -> wartość`,
+- dodawać nowe wiersze,
+- usuwać istniejące wiersze,
+- zapisać cały słownik do pliku JSON.
+
+Przy zapisie aplikacja:
+
+- waliduje, czy każdy wiersz ma niepusty klucz i wartość,
+- odrzuca zduplikowane klucze,
+- tworzy kopię bezpieczeństwa pliku `*.bak`,
+- przeładowuje zapisany słownik w pamięci aplikacji bez potrzeby restartu serwera.
 
 ### 2. Rozpoznanie encji w tekście
 
@@ -216,6 +244,40 @@ Projekt korzysta z bibliotek wymienionych w `requirements.txt`, w tym:
 - Aplikacja działa najlepiej na tekstach historycznych z wyraźnymi nazwami osób i miejsc.
 - Rozstrzyganie encji ma charakter wspomagający, nie gwarantuje pełnej poprawności naukowej i powinno być traktowane jako etap roboczy redakcji cyfrowej.
 - W kodzie istnieje semantyczny fallback SPARQL do Wikidaty, ale jest obecnie wyłączony ze względu na problemy z wydajnością zapytań.
+
+## Konfiguracja słowników
+
+Część słowników merytorycznych została wydzielona do katalogu `config/`, aby mogły być uzupełniane bez edycji kodu programu. Dotyczy to obecnie plików:
+
+- `config/person_equivalents.json`
+- `config/place_equivalents.json`
+- `config/place_adjectival_equivalents.json`
+- `config/plwiki_office_equivalents.json`
+
+Pliki te można:
+
+- edytować ręcznie jako zwykłe pliki JSON,
+- edytować z poziomu interfejsu WWW w oknie `Słowniki`.
+
+Przy zapisie z poziomu aplikacji tworzona jest kopia bezpieczeństwa `*.bak`, a nowa wersja słownika jest od razu przeładowywana w pamięci procesu.
+
+Znaczenie poszczególnych słowników jest następujące:
+
+- `POLISH_PERSON_EQUIVALENTS` - słownik łacińskich lub historycznych form imion z polskimi odpowiednikami. Pozwala wyszukiwać różne warianty tych samych osób w bazach referencyjnych.
+- `POLISH_PLACE_EQUIVALENTS` - słownik historycznych i łacińskich nazw miejsc z polskimi odpowiednikami. Dzięki temu aplikacja może przechodzić od form historycznych do form polskich częściej spotykanych w bazach referencyjnych i Wikipedii.
+- `POLISH_PLACE_ADJECTIVAL_EQUIVALENTS` - mapowanie nazw miejsc na polskie przymiotniki, np. `pomerania -> pomorski`, `prussia -> pruski`. Pozwala budować bardziej naturalne polskie frazy do wyszukiwania, np. nie tylko `Chełmno`, ale też `chełmiński`.
+- `PLWIKI_OFFICE_EQUIVALENTS` - słownik różnych form urzędów i ról z polskimi odpowiednikami, np. `cardinalis -> kardynał`, `episcopus -> biskup`, `cancellarius -> kanclerz`. Służy głównie dodatkowemu wyszukiwaniu opartemu o polską Wikipedię.
+
+Każdy wpis ma postać prostego mapowania tekstowego, np.:
+
+```json
+{
+  "cracovia": "Kraków",
+  "cardinalis": "kardynał"
+}
+```
+
+W praktyce oznacza to, że historyk lub redaktor może stopniowo rozbudowywać zaplecze słownikowe aplikacji bez modyfikowania kodu Python.
 
 ## Diagram procesu
 

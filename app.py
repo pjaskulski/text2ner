@@ -12,6 +12,8 @@ from names_linking import (
     DEFAULT_GEMINI_MODEL,
     diagnostic_log,
     extract_years_from_text,
+    get_editable_dictionary_definitions,
+    get_editable_dictionary_snapshot,
     link_entity,
     normalize_gemini_model_name,
     normalize_enabled_tag_types,
@@ -21,6 +23,8 @@ from names_linking import (
     start_diagnostic_session,
     stop_diagnostic_session,
     tag_entities_with_gemini,
+    validate_editable_dictionary_entries,
+    write_editable_dictionary_config,
 )
 
 
@@ -455,6 +459,47 @@ def download_diagnostic_log():
             as_attachment=True,
             download_name=os.path.basename(log_path),
         )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route('/dictionary-configs', methods=['GET'])
+@requires_auth
+def get_dictionary_configs():
+    """Zwraca słowniki konfiguracyjne dostępne do edycji w interfejsie WWW."""
+    return jsonify({
+        "definitions": get_editable_dictionary_definitions(),
+        "dictionaries": get_editable_dictionary_snapshot(),
+    })
+
+
+@app.route('/dictionary-configs', methods=['POST'])
+@requires_auth
+def save_dictionary_configs():
+    """Zapisuje słowniki konfiguracyjne edytowane z poziomu aplikacji."""
+    try:
+        payload = request.get_json(silent=True) or {}
+        dictionaries = payload.get('dictionaries', {})
+        if not isinstance(dictionaries, dict) or not dictionaries:
+            raise ValueError("Brak danych słowników do zapisu.")
+
+        normalized_payload = {}
+        for definition in get_editable_dictionary_definitions():
+            dictionary_key = definition["key"]
+            if dictionary_key not in dictionaries:
+                raise ValueError(f"Brak słownika '{dictionary_key}' w żądaniu.")
+            normalized_payload[dictionary_key] = validate_editable_dictionary_entries(
+                dictionaries[dictionary_key]
+            )
+
+        for dictionary_key, normalized_mapping in normalized_payload.items():
+            write_editable_dictionary_config(dictionary_key, normalized_mapping)
+
+        return jsonify({
+            "message": "Słowniki zostały zapisane.",
+            "definitions": get_editable_dictionary_definitions(),
+            "dictionaries": get_editable_dictionary_snapshot(),
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 

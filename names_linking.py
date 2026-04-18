@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import shutil
 from contextvars import ContextVar
 from datetime import datetime, timedelta
 
@@ -30,6 +31,8 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 CURRENT_DIAGNOSTIC_LOG_PATH = ContextVar("CURRENT_DIAGNOSTIC_LOG_PATH", default=None)
 CURRENT_GEMINI_MODEL = ContextVar("CURRENT_GEMINI_MODEL", default=DEFAULT_GEMINI_MODEL)
 DIAGNOSTIC_LOG_RETENTION_HOURS = 48
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_DIR = os.path.join(BASE_DIR, "config")
 
 
 WIKIBASE_SOURCES = {
@@ -74,59 +77,71 @@ DATE_MONTH_TOKENS = {
     "januar": 1,
     "januari": 1,
     "stycznia": 1,
+    "styczeń": 1,
     "feb": 2,
     "februarii": 2,
     "februarius": 2,
     "february": 2,
     "februar": 2,
     "lutego": 2,
+    "luty": 2,
     "martii": 3,
     "martius": 3,
     "march": 3,
     "marzec": 3,
     "marca": 3,
+    "marzec": 3,
     "april": 4,
     "aprilis": 4,
     "aprili": 4,
     "kwietnia": 4,
+    "kwiecień": 4,
     "maii": 5,
     "maius": 5,
     "magii": 5,
     "maja": 5,
     "may": 5,
     "mai": 5,
+    "maj": 5,
     "iunii": 6,
     "iunius": 6,
     "junii": 6,
     "junius": 6,
     "june": 6,
     "czerwca": 6,
+    "czerwiec": 6,
     "iulii": 7,
     "iulius": 7,
     "julii": 7,
     "julius": 7,
     "july": 7,
     "lipca": 7,
+    "lipiec": 7,
     "augusti": 8,
     "augustus": 8,
     "august": 8,
     "sierpnia": 8,
+    "sierpień": 8,
     "septembris": 9,
     "september": 9,
     "septembra": 9,
     "wrzesnia": 9,
     "września": 9,
+    "wrzesień": 9,
     "octobris": 10,
     "october": 10,
     "oktober": 10,
     "pazdziernika": 10,
     "października": 10,
+    "październik": 10,
     "novembris": 11,
     "november": 11,
     "listopada": 11,
+    "listopad": 11,
     "decembris": 12,
     "december": 12,
     "grudnia": 12,
+    "grudzień": 12
 }
 
 ORG_NAME_SIGNAL_STEMS = (
@@ -196,7 +211,7 @@ GENERIC_PLACE_SIGNAL_TOKENS = {
     "locus", "locum", "terra", "regio", "partes", "urbs", "oppidum",
 }
 
-POLISH_PERSON_EQUIVALENTS = {
+DEFAULT_POLISH_PERSON_EQUIVALENTS = {
     "andreas": "Andrzej",
     "casimirus": "Kazimierz",
     "fredericus": "Fryderyk",
@@ -214,7 +229,7 @@ POLISH_PERSON_EQUIVALENTS = {
     "wenceslaus": "Wacław",
 }
 
-POLISH_PLACE_EQUIVALENTS = {
+DEFAULT_POLISH_PLACE_EQUIVALENTS = {
     "chelmno": "Chełmno",
     "cracovia": "Kraków",
     "culm": "Chełmno",
@@ -234,7 +249,7 @@ POLISH_PLACE_EQUIVALENTS = {
     "torunia": "Toruń",
 }
 
-POLISH_PLACE_ADJECTIVAL_EQUIVALENTS = {
+DEFAULT_POLISH_PLACE_ADJECTIVAL_EQUIVALENTS = {
     "chelmno": "chełmiński",
     "culm": "chełmiński",
     "culmensis": "chełmiński",
@@ -258,7 +273,7 @@ POLISH_PLACE_ADJECTIVAL_EQUIVALENTS = {
     "torunia": "toruński",
 }
 
-PLWIKI_OFFICE_EQUIVALENTS = {
+DEFAULT_PLWIKI_OFFICE_EQUIVALENTS = {
     "archiepiscopus": "arcybiskup",
     "bishop": "biskup",
     "biskup": "biskup",
@@ -298,6 +313,201 @@ PLWIKI_OFFICE_EQUIVALENTS = {
     "sacerdos": "kapłan",
     "vir": "duchowny",
     "wojewoda": "wojewoda",
+}
+
+
+def _normalize_config_key(value):
+    """Porządkuje klucz z pliku konfiguracyjnego do postaci używanej przy lookupach."""
+    return re.sub(r"\s+", " ", str(value or "").strip()).casefold()
+
+
+def _normalize_config_value(value):
+    """Porządkuje wartość tekstową z pliku konfiguracyjnego."""
+    return re.sub(r"\s+", " ", str(value or "").strip())
+
+
+def load_json_mapping_config(filename, default_mapping):
+    """Wczytuje słownik tekstowy z pliku JSON i bezpiecznie wraca do danych domyślnych przy błędzie."""
+    config_path = os.path.join(CONFIG_DIR, filename)
+    normalized_default = {
+        _normalize_config_key(key): _normalize_config_value(value)
+        for key, value in default_mapping.items()
+        if _normalize_config_key(key) and _normalize_config_value(value)
+    }
+
+    if not os.path.exists(config_path):
+        print(
+            f"[TEXT2NER-CONFIG] Brak pliku {config_path}; "
+            f"używam wartości domyślnych."
+        )
+        return dict(normalized_default)
+
+    try:
+        with open(config_path, "r", encoding="utf-8") as config_file:
+            raw_mapping = json.load(config_file)
+    except Exception as exc:
+        print(
+            f"[TEXT2NER-CONFIG] Nie udało się wczytać {config_path}: {exc}; "
+            f"używam wartości domyślnych."
+        )
+        return dict(normalized_default)
+
+    if not isinstance(raw_mapping, dict):
+        print(
+            f"[TEXT2NER-CONFIG] Plik {config_path} nie zawiera obiektu JSON; "
+            f"używam wartości domyślnych."
+        )
+        return dict(normalized_default)
+
+    normalized_mapping = {}
+    for raw_key, raw_value in raw_mapping.items():
+        key = _normalize_config_key(raw_key)
+        value = _normalize_config_value(raw_value)
+        if not key or not value:
+            continue
+        normalized_mapping[key] = value
+
+    if not normalized_mapping:
+        print(
+            f"[TEXT2NER-CONFIG] Plik {config_path} nie zawiera poprawnych par tekstowych; "
+            f"używam wartości domyślnych."
+        )
+        return dict(normalized_default)
+
+    return normalized_mapping
+
+
+def get_editable_dictionary_definitions():
+    """Zwraca metadane słowników konfiguracyjnych edytowalnych z poziomu aplikacji."""
+    definitions = []
+    for config_key, config in EDITABLE_DICTIONARY_CONFIGS.items():
+        current_mapping = globals()[config["global_name"]]
+        definitions.append({
+            "key": config_key,
+            "filename": config["filename"],
+            "title": config["title"],
+            "description": config["description"],
+            "entry_count": len(current_mapping),
+        })
+    return definitions
+
+
+def get_editable_dictionary_snapshot():
+    """Zwraca bieżący stan wszystkich edytowalnych słowników w postaci gotowej dla UI."""
+    snapshot = {}
+    for config_key, config in EDITABLE_DICTIONARY_CONFIGS.items():
+        current_mapping = globals()[config["global_name"]]
+        snapshot[config_key] = [
+            {"key": key, "value": value}
+            for key, value in sorted(current_mapping.items())
+        ]
+    return snapshot
+
+
+def validate_editable_dictionary_entries(entries):
+    """Waliduje i normalizuje listę wpisów słownika przesłaną z interfejsu."""
+    if not isinstance(entries, list):
+        raise ValueError("Słownik musi być przekazany jako lista wierszy.")
+
+    normalized_mapping = {}
+    original_keys = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ValueError("Każdy wiersz słownika musi być obiektem JSON.")
+
+        raw_key = entry.get("key", "")
+        raw_value = entry.get("value", "")
+        normalized_key = _normalize_config_key(raw_key)
+        normalized_value = _normalize_config_value(raw_value)
+
+        if not normalized_key and not normalized_value:
+            continue
+        if not normalized_key or not normalized_value:
+            raise ValueError("Każdy wiersz słownika musi zawierać niepusty klucz i wartość.")
+        if normalized_key in normalized_mapping:
+            duplicate_key = original_keys[normalized_key]
+            raise ValueError(f"Powielony klucz słownika: '{duplicate_key}'.")
+
+        normalized_mapping[normalized_key] = normalized_value
+        original_keys[normalized_key] = normalized_key
+
+    if not normalized_mapping:
+        raise ValueError("Słownik nie może być pusty.")
+
+    return dict(sorted(normalized_mapping.items()))
+
+
+def write_editable_dictionary_config(config_key, normalized_mapping):
+    """Zapisuje wskazany słownik konfiguracyjny do pliku JSON i odświeża go w pamięci."""
+    config = EDITABLE_DICTIONARY_CONFIGS.get(config_key)
+    if not config:
+        raise ValueError("Nieznany słownik konfiguracyjny.")
+    if not isinstance(normalized_mapping, dict) or not normalized_mapping:
+        raise ValueError("Brak poprawnych danych słownika do zapisu.")
+
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    config_path = os.path.join(CONFIG_DIR, config["filename"])
+    backup_path = config_path + ".bak"
+
+    if os.path.exists(config_path):
+        shutil.copy2(config_path, backup_path)
+
+    with open(config_path, "w", encoding="utf-8") as config_file:
+        json.dump(normalized_mapping, config_file, ensure_ascii=False, indent=2, sort_keys=True)
+        config_file.write("\n")
+
+    globals()[config["global_name"]] = load_json_mapping_config(
+        config["filename"],
+        config["default_mapping"],
+    )
+
+
+POLISH_PERSON_EQUIVALENTS = load_json_mapping_config(
+    "person_equivalents.json",
+    DEFAULT_POLISH_PERSON_EQUIVALENTS,
+)
+POLISH_PLACE_EQUIVALENTS = load_json_mapping_config(
+    "place_equivalents.json",
+    DEFAULT_POLISH_PLACE_EQUIVALENTS,
+)
+POLISH_PLACE_ADJECTIVAL_EQUIVALENTS = load_json_mapping_config(
+    "place_adjectival_equivalents.json",
+    DEFAULT_POLISH_PLACE_ADJECTIVAL_EQUIVALENTS,
+)
+PLWIKI_OFFICE_EQUIVALENTS = load_json_mapping_config(
+    "plwiki_office_equivalents.json",
+    DEFAULT_PLWIKI_OFFICE_EQUIVALENTS,
+)
+
+EDITABLE_DICTIONARY_CONFIGS = {
+    "person_equivalents": {
+        "filename": "person_equivalents.json",
+        "title": "Osoby",
+        "description": "Historyczne i łacińskie formy imion z polskimi odpowiednikami.",
+        "global_name": "POLISH_PERSON_EQUIVALENTS",
+        "default_mapping": DEFAULT_POLISH_PERSON_EQUIVALENTS,
+    },
+    "place_equivalents": {
+        "filename": "place_equivalents.json",
+        "title": "Miejsca",
+        "description": "Historyczne i łacińskie nazwy miejsc z polskimi odpowiednikami.",
+        "global_name": "POLISH_PLACE_EQUIVALENTS",
+        "default_mapping": DEFAULT_POLISH_PLACE_EQUIVALENTS,
+    },
+    "place_adjectival_equivalents": {
+        "filename": "place_adjectival_equivalents.json",
+        "title": "Przymiotniki miejscowe",
+        "description": "Nazwy miejsc mapowane na polskie formy przymiotnikowe.",
+        "global_name": "POLISH_PLACE_ADJECTIVAL_EQUIVALENTS",
+        "default_mapping": DEFAULT_POLISH_PLACE_ADJECTIVAL_EQUIVALENTS,
+    },
+    "plwiki_office_equivalents": {
+        "filename": "plwiki_office_equivalents.json",
+        "title": "Urzędy i funkcje",
+        "description": "Formy urzędów i ról używane przy dodatkowym wyszukiwaniu w polskiej Wikipedii.",
+        "global_name": "PLWIKI_OFFICE_EQUIVALENTS",
+        "default_mapping": DEFAULT_PLWIKI_OFFICE_EQUIVALENTS,
+    },
 }
 
 TAG_PROMPT_LABELS = {
