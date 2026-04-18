@@ -12,13 +12,13 @@ Diagram procesu przetwarzania w projekcie `text2ner` jest utrzymywany w Graphviz
 
 Diagram obejmuje pełny przebieg przetwarzania:
 
-- przyjęcie tekstu przez endpoint `POST /process`,
-- tagowanie encji przez Gemini,
-- iterację po encjach `persName` i `placeName`,
-- analizę formy i budowę planu zapytań,
-- wyszukiwanie kandydatów w `WikiHum`, `va.wiki.kul.pl` i `Wikidata`,
-- dodatkowy fallback przez polską Wikipedię dla części encji osobowych,
-- złożenie końcowego TEI-XML oraz odpowiedzi JSON.
+- standardowy workflow `POST /recognize` -> podgląd / opcjonalna korekta -> `POST /identify`,
+- tworzenie logu diagnostycznego i automatyczne czyszczenie logów starszych niż 48 godzin,
+- dwuprzebiegowe tagowanie encji przez Gemini z uwzględnieniem wybranych typów tagów,
+- iterację po encjach `persName` i `placeName` podczas identyfikacji,
+- analizę formy encji, budowę planu zapytań i wybór kandydata przez Gemini,
+- wyszukiwanie kandydatów w `WikiHum`, `va.wiki.kul.pl`, `Wikidata` oraz fallback przez polską Wikipedię dla części encji osobowych,
+- złożenie końcowego TEI-XML, list encji oraz odpowiedzi JSON zwracanej do interfejsu.
 
 ## Aktualizacja renderów
 

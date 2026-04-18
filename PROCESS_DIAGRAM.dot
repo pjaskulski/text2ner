@@ -2,12 +2,12 @@ digraph text2ner_process {
     graph [
         rankdir=TB,
         labelloc="t",
-        label="TEXT2NER: proces przetwarzania tekstu do TEI z identyfikacją encji",
+        label="TEXT2NER: proces rozpoznawania i identyfikacji encji w TEI-XML",
         fontsize=20,
         fontname="Helvetica",
         pad=0.3,
         nodesep=0.35,
-        ranksep=0.6,
+        ranksep=0.65,
         splines=polyline,
         bgcolor="white"
     ];
@@ -30,152 +30,125 @@ digraph text2ner_process {
     ];
 
     start [label="Użytkownik wkleja tekst\nw aplikacji WWW", fillcolor="#E0F2FE", color="#0284C7"];
-
-    subgraph cluster_request {
-        label="1. Przyjęcie tekstu i tagowanie";
+    settings [label="Parametry analizy:\nwybór modelu Gemini\noraz typów tagów\n(persName, placeName, date,\nroleName, orgName)"];
+    subgraph cluster_recognize {
+        label="1. Etap rozpoznawania encji";
         color="#CBD5E1";
         style="rounded";
 
-        post_process [label="POST /process\nwe Flask"];
-        log_file [label="Utworzenie pliku\nlogu diagnostycznego"];
-        trim_input [label="Przycięcie wejścia\ndo 5000 znaków"];
-        extract_doc_years [label="Ekstrakcja lat\nz całego dokumentu"];
-        tag_gemini [label="Gemini:\ntag_entities_with_gemini"];
-        tagged_xml [label="XML-like output\nz persName i placeName"];
-        parse_xml [label="BeautifulSoup parsuje XML"];
-        entity_loop [label="Pętla po wszystkich\nencjach w dokumencie"];
+        post_recognize [label="POST /recognize"];
+        start_log_rec [label="start_diagnostic_session:\nusuń logi starsze niż 48 h\nutwórz nowy plik logu"];
+        recognize_request [label="Walidacja żądania:\ntext <= 5000 znaków\ntag_types\nmodel_name"];
+        tagging_prompt [label="Budowa promptu NER\nwg włączonych tagów"];
+        gemini_first_pass [label="Gemini:\npierwszy pass tagowania XML"];
+        gemini_review_pass [label="Gemini:\ndrugi pass korekcyjny\n(review tagged XML)"];
+        review_success [shape=diamond, label="Czy drugi pass\nzakończył się powodzeniem?"];
+        raw_tagged_xml [label="XML roboczy z tagami\npersName, placeName,\ndate, roleName, orgName"];
+        normalize_tei [label="BeautifulSoup + compress_inline_tags\n+ serialize_inner_xml"];
+        tei_without_ids [label="Pełny TEI-XML\nbez identyfikacji referencyjnej", fillcolor="#DCFCE7", color="#16A34A"];
+        recognize_response [label="JSON /recognize:\nxml\nrecognized_tag_types\nidentification_performed=false\ndiagnostic_log_file", fillcolor="#E0F2FE", color="#0284C7"];
     }
 
-    subgraph cluster_entity {
-        label="2. Przetwarzanie pojedynczej encji";
+    subgraph cluster_review {
+        label="2. Praca użytkownika po rozpoznaniu";
         color="#CBD5E1";
         style="rounded";
 
-        surface_context [label="Pobranie surface form\ni kontekstu encji"];
-        cache_check [shape=diamond, label="Czy encja była już\nskutecznie zidentyfikowana\nw tym dokumencie?"];
-        cache_hit [label="Użycie wyniku z cache\n(key/ref)"];
-        link_entity [label="link_entity(...)",
-            fillcolor="#F1F5F9", color="#64748B"];
+        preview_xml [label="Widok XML oraz podgląd tekstu\nz kolorowaniem tagów"];
+        manual_edit [label="Opcjonalna korekta ręczna:\nusuń tag / zmień typ / dodaj tag"];
+        run_identify [shape=diamond, label="Czy uruchomić\nIdentyfikuj encje?"];
+        keep_only_tei [label="Koniec po etapie 1:\nTEI-XML z tagami,\nbez ref dla persName/placeName", fillcolor="#E0F2FE", color="#0284C7"];
+    }
+
+    subgraph cluster_identify {
+        label="3. Etap identyfikacji encji";
+        color="#CBD5E1";
+        style="rounded";
+
+        post_identify [label="POST /identify"];
+        start_log_identify [label="start_diagnostic_session:\nusuń logi starsze niż 48 h\nutwórz nowy plik logu"];
+        identify_input [label="Identyfikacja w istniejącym TEI:\nextract_inner_xml\n+ model_name"];
+        extract_doc_years [label="Wykrycie lat dokumentu\nz całego XML / tekstu"];
+        entity_loop [label="Pętla po tagach\npersName i placeName"];
+        entity_context [label="Pobranie surface form\ni kontekstu encji"];
+        cache_check [shape=diamond, label="Czy encja została już\nskutecznie rozstrzygnięta\nw tym dokumencie?"];
+        cache_hit [label="Użycie wyniku z cache\n(key/ref bez ponownej analizy)"];
+        link_entity [label="link_entity(...)", fillcolor="#F1F5F9", color="#64748B"];
 
         analyze_form [label="Gemini:\nanalyze_form_with_gemini"];
         analyze_outputs [label="normalized_best\nlemma_candidates\nsurface_variants\noffice_terms\nplace_terms\ncontext_clues\ncontext_years"];
         build_plan [label="build_query_plan"];
-        plan_outputs [label="forma z tekstu\nforma znormalizowana\npolskie odpowiedniki\nkombinacje: imię + urząd + miejsce"];
-    }
 
-    subgraph cluster_candidates {
-        label="3. Wyszukiwanie kandydatów";
-        color="#CBD5E1";
-        style="rounded";
+        specialized_search [label="Special:Search ~2\nw WikiHum i va.wiki.kul.pl"];
+        specialized_filter [label="Filtrowanie po typie\npersName / placeName\n+ deduplikacja i ranking"];
+        specialized_decision [label="Gemini:\nbuild_link_decision\n(selected_url, reason,\nmatched_signals)"];
+        specialized_selected [shape=diamond, label="Czy wybrano kandydata\nze źródeł specjalistycznych?"];
 
-        collect_local [label="collect_candidates:\nźródła lokalne"];
-        wikihum_search [label="Special:Search ~2\nw WikiHum"];
-        kul_search [label="Special:Search ~2\nw va.wiki.kul.pl"];
-        local_filter [label="Filtrowanie po instance of"];
-        local_rank [label="Dedup i uporządkowanie\nkandydatów lokalnych"];
-        local_candidates [shape=diamond, label="Czy są kandydaci\nlokalni?"];
-        local_decision [label="Gemini:\nbuild_link_decision"];
-        local_selected [shape=diamond, label="Czy wybrano\nkandydata lokalnego?"];
-
-        wikidata_fallback [label="Fallback standardowy\ndo Wikidata"];
-        wikidata_search [label="Special:Search ~2\nw Wikidata"];
-        wikidata_filter [label="Filtrowanie po instance of"];
-        wikidata_rank [label="Dedup i uporządkowanie\nkandydatów Wikidata"];
+        wikidata_retry [label="Ponowna próba:\nSpecial:Search ~2\nwyłącznie w Wikidata"];
+        wikidata_filter [label="Filtrowanie po typie\n+ deduplikacja i ranking"];
         wikidata_decision [label="Gemini:\nbuild_link_decision"];
-        wikidata_selected [shape=diamond, label="Czy wybrano\nkandydata z Wikidata?"];
+        wikidata_selected [shape=diamond, label="Czy wybrano kandydata\nz Wikidaty?"];
 
-        wikidata_retry [label="Druga próba:\ntylko kandydaci z Wikidata"];
-        wikidata_retry_search [label="Special:Search ~2\nw Wikidata"];
-        wikidata_retry_filter [label="Filtrowanie po instance of"];
-        wikidata_retry_rank [label="Dedup i uporządkowanie\nkandydatów"];
-        wikidata_retry_decision [label="Gemini:\nbuild_link_decision"];
-    }
-
-    subgraph cluster_plwiki {
-        label="4. Fallback plwiki dla osób";
-        color="#CBD5E1";
-        style="rounded";
-
-        person_check [shape=diamond, label="Czy to persName\nz urzędem lub miejscem?"];
-        plwiki_fallback [label="Uruchom fallback\nplwiki"];
-        plwiki_queries [label="Budowa polskich zapytań\nencyklopedycznych"];
-        plwiki_examples [label="Np.:\nMikołaj biskup chełmiński"];
-        plwiki_search [label="plwiki search API"];
-        plwiki_meta [label="Pobranie pageprops\ni extract"];
-        plwiki_qid [label="Odczyt wikibase_item"];
-        plwiki_to_wd [label="Konwersja trafień\nna kandydatów Wikidata"];
-        plwiki_enrich [label="Dołączenie tytułu i leadu\nz plwiki"];
+        plwiki_check [shape=diamond, label="Czy uruchomić\nfallback plwiki?\n(tylko część persName)"];
+        plwiki_search [label="plwiki search API\n+ pageprops + extract"];
+        plwiki_to_wikidata [label="Konwersja do kandydatów\nWikidata z leadem"];
         plwiki_decision [label="Gemini:\nbuild_link_decision"];
-        plwiki_selected [shape=diamond, label="Czy wybrano\nkandydata z plwiki?"];
+        selected_final [shape=diamond, label="Czy wybrano\nkandydata?"];
     }
 
     subgraph cluster_finish {
-        label="5. Zapis wyniku i odpowiedź";
+        label="4. Zapis wyniku i odpowiedź";
         color="#CBD5E1";
         style="rounded";
 
-        selected [label="decision = selected", fillcolor="#DCFCE7", color="#16A34A"];
-        unresolved [label="decision = none", fillcolor="#FEF3C7", color="#D97706"];
-        set_key_ref [label="Ustawienie key i ref"];
-        set_key_only [label="Ustawienie tylko key"];
-        add_resolved [label="Dodanie do listy\nzidentyfikowanych encji"];
-        add_unresolved [label="Dodanie do listy\nniezidentyfikowanych encji"];
-        next_entity [shape=diamond, label="Czy są kolejne\nencje?"];
-        build_tei [label="Złożenie końcowego\nTEI XML"];
-        sort_entities [label="Sortowanie entities"];
-        sort_unresolved [label="Sortowanie\nunresolved_entities"];
-        json_response [label="JSON response", fillcolor="#E0F2FE", color="#0284C7"];
-        out_xml [label="xml"];
-        out_entities [label="entities"];
-        out_unresolved [label="unresolved_entities"];
-        out_log [label="diagnostic_log_file"];
+        resolved [label="Ustawienie key + ref\noraz dopisanie do entities", fillcolor="#DCFCE7", color="#16A34A"];
+        unresolved [label="Ustawienie tylko key\noraz dopisanie do unresolved_entities", fillcolor="#FEF3C7", color="#D97706"];
+        next_entity [shape=diamond, label="Czy są kolejne\nencje do identyfikacji?"];
+        build_final_tei [label="serialize_inner_xml\n+ build_full_tei_xml"];
+        sort_outputs [label="Sortowanie lists:\nentities\nunresolved_entities"];
+        identify_response [label="JSON /identify:\nxml\nentities\nunresolved_entities\nidentification_performed=true\ndiagnostic_log_file", fillcolor="#E0F2FE", color="#0284C7"];
+        ui_output [label="UI: kod XML, podgląd tekstu,\nlista encji, przyciski logu,\npobieranie XML/logu", fillcolor="#E0F2FE", color="#0284C7"];
     }
 
-    start -> post_process;
-    post_process -> log_file -> trim_input -> extract_doc_years -> tag_gemini -> tagged_xml -> parse_xml -> entity_loop;
+    start -> settings;
+    settings -> post_recognize [label="standardowy workflow"];
 
-    entity_loop -> surface_context -> cache_check;
+    post_recognize -> start_log_rec -> recognize_request -> tagging_prompt -> gemini_first_pass -> gemini_review_pass -> review_success;
+    review_success -> raw_tagged_xml [label="nie,\nzostaje 1. pass"];
+    review_success -> raw_tagged_xml [label="tak,\nużyj wyniku review"];
+    raw_tagged_xml -> normalize_tei -> tei_without_ids;
+
+    tei_without_ids -> recognize_response [label="/recognize"];
+    recognize_response -> preview_xml -> manual_edit -> run_identify;
+    run_identify -> keep_only_tei [label="nie"];
+    run_identify -> post_identify [label="tak"];
+
+    post_identify -> start_log_identify -> identify_input;
+    tei_without_ids -> identify_input [label="XML po rozpoznaniu"];
+
+    identify_input -> extract_doc_years -> entity_loop -> entity_context -> cache_check;
     cache_check -> cache_hit [label="tak"];
     cache_check -> link_entity [label="nie"];
 
-    link_entity -> analyze_form -> analyze_outputs -> build_plan -> plan_outputs -> collect_local;
-    collect_local -> wikihum_search;
-    collect_local -> kul_search;
-    wikihum_search -> local_filter;
-    kul_search -> local_filter;
-    local_filter -> local_rank -> local_candidates;
+    link_entity -> analyze_form -> analyze_outputs -> build_plan -> specialized_search -> specialized_filter -> specialized_decision -> specialized_selected;
+    specialized_selected -> resolved [label="tak"];
+    specialized_selected -> wikidata_retry [label="nie"];
 
-    local_candidates -> local_decision [label="tak"];
-    local_candidates -> wikidata_fallback [label="nie"];
-    local_decision -> local_selected;
-    local_selected -> selected [label="tak"];
-    local_selected -> wikidata_retry [label="nie"];
+    wikidata_retry -> wikidata_filter -> wikidata_decision -> wikidata_selected;
+    wikidata_selected -> resolved [label="tak"];
+    wikidata_selected -> plwiki_check [label="nie"];
 
-    wikidata_fallback -> wikidata_search -> wikidata_filter -> wikidata_rank -> wikidata_decision -> wikidata_selected;
+    plwiki_check -> unresolved [label="nie"];
+    plwiki_check -> plwiki_search [label="tak"];
+    plwiki_search -> plwiki_to_wikidata -> plwiki_decision -> selected_final;
+    selected_final -> resolved [label="tak"];
+    selected_final -> unresolved [label="nie"];
 
-    wikidata_retry -> wikidata_retry_search -> wikidata_retry_filter -> wikidata_retry_rank -> wikidata_retry_decision -> wikidata_selected;
-
-    wikidata_selected -> selected [label="tak"];
-    wikidata_selected -> person_check [label="nie"];
-
-    person_check -> unresolved [label="nie"];
-    person_check -> plwiki_fallback [label="tak"];
-    plwiki_fallback -> plwiki_queries -> plwiki_examples -> plwiki_search -> plwiki_meta -> plwiki_qid -> plwiki_to_wd -> plwiki_enrich -> plwiki_decision -> plwiki_selected;
-    plwiki_selected -> selected [label="tak"];
-    plwiki_selected -> unresolved [label="nie"];
-
-    selected -> set_key_ref -> add_resolved;
-    unresolved -> set_key_only -> add_unresolved;
-    cache_hit -> add_resolved;
-
-    add_resolved -> next_entity;
-    add_unresolved -> next_entity;
+    cache_hit -> next_entity;
+    resolved -> next_entity;
+    unresolved -> next_entity;
     next_entity -> entity_loop [label="tak"];
-    next_entity -> build_tei [label="nie"];
+    next_entity -> build_final_tei [label="nie"];
 
-    build_tei -> sort_entities -> sort_unresolved -> json_response;
-    json_response -> out_xml;
-    json_response -> out_entities;
-    json_response -> out_unresolved;
-    json_response -> out_log;
+    build_final_tei -> sort_outputs -> identify_response -> ui_output;
 }

@@ -23,13 +23,13 @@ W praktyce oznacza to, że z nieopracowanego tekstu źródłowego powstaje:
 - TEI-XML z tagami `persName`, `placeName`, `orgName`, `date` i `roleName`,
 - lista encji z rozstrzygniętym odnośnikiem `ref`,
 - lista encji, których nie udało się wiarygodnie powiązać z rekordem referencyjnym,
-- log diagnostyczny całego przebiegu przetwarzania.
+- log diagnostyczny bieżącego przebiegu rozpoznawania albo identyfikacji.
 
 ## Ogólny model działania
 
 Przetwarzanie jest hybrydowe:
 
-- model Gemini odpowiada za rozpoznanie encji w surowym tekście, utworzenie znormalizowanych form nazwy osoby miejsca (`key`)
+- model Gemini odpowiada za rozpoznanie encji w surowym tekście oraz przygotowanie znormalizowanych form nazw osób i miejsc używanych później jako `key`,
 - ten sam model pomaga w ostrożnej analizie formy encji i w końcowym wyborze najlepszego kandydata z baz referencyjnych,
 - wyszukiwanie kandydatów odbywa się przez zewnętrzne źródła referencyjne:
   `WikiHum`, `va.wiki.kul.pl` i `Wikidata`,
@@ -47,101 +47,125 @@ Pełny diagram procesu jest dostępny w trzech wersjach:
 - [PROCESS_DIAGRAM.svg](/home/piotr/ihpan/text2ner/PROCESS_DIAGRAM.svg) - wersja do szybkiego podglądu
 - [PROCESS_DIAGRAM.pdf](/home/piotr/ihpan/text2ner/PROCESS_DIAGRAM.pdf) - wersja do druku i udostępniania
 
-### 1. Przyjęcie tekstu
+### 1. Ustawienie parametrów analizy
 
-Użytkownik wkleja tekst do interfejsu WWW, a aplikacja wysyła go do endpointu `POST /process`.
+Przed uruchomieniem rozpoznawania użytkownik może w oknie `Parametry`:
 
-Na tym etapie:
+- wybrać model Gemini używany w bieżącym przebiegu,
+- włączyć lub wyłączyć typy tagów rozpoznawania,
+- pozostawić domyślny zestaw `persName`, `placeName`, `date` i `roleName` albo rozszerzyć go o `orgName`.
 
-- tworzony jest plik logu diagnostycznego w katalogu `log/`,
-- tekst wejściowy jest przycinany do 5000 znaków,
-- z całego tekstu wyciągane są daty, które później pomagają oceniać zgodność chronologiczną kandydatów z baz referencyjnych.
+Ustawienia są używane przy kolejnym uruchomieniu rozpoznawania, a wybrany model jest również przekazywany do etapu identyfikacji.
 
 ### 2. Rozpoznanie encji w tekście
 
-Model Gemini otrzymuje instrukcje:
+Użytkownik uruchamia `Rozpoznaj encje`, a aplikacja wysyła tekst do endpointu `POST /recognize`.
 
-- otagowania osób jako `persName`,
-- otagowania miejsc jako `placeName`,
-- zwrócenia wyniku w strukturze zgodnej z TEI.
+Na tym etapie:
 
-### 3. Iteracja po każdej encji
+- tworzony jest nowy plik logu diagnostycznego w katalogu `log/`,
+- przed utworzeniem nowego logu usuwane są automatycznie pliki starsze niż 48 godzin,
+- tekst wejściowy jest przycinany do 5000 znaków,
+- Gemini wykonuje pierwszy pass tagowania XML,
+- Gemini wykonuje drugi pass korekcyjny, który próbuje uzupełnić pominięte tagi i poprawić oczywiste pomyłki,
+- wynik jest normalizowany do pełnego dokumentu TEI-XML.
 
-Dla każdego znacznika `persName` i `placeName` w TEI-XML aplikacja:
+Rozpoznawanie może oznaczać:
 
-- pobiera tekst encji z dokumentu,
+- osoby jako `persName`,
+- miejsca jako `placeName`,
+- daty jako `date`, a jeśli to możliwe także z atrybutem `when` w formacie ISO,
+- funkcje i urzędy jako `roleName`,
+- instytucje jako `orgName`.
+
+Po tym etapie użytkownik otrzymuje TEI-XML bez identyfikacji referencyjnej.
+
+### 3. Podgląd i ręczna korekta tagów
+
+Po rozpoznaniu aplikacja pokazuje:
+
+- kod XML,
+- podgląd tekstu z kolorowaniem tagów,
+- przycisk pobrania XML,
+- przycisk pobrania pełnego logu diagnostycznego.
+
+Przed identyfikacją użytkownik może ręcznie poprawić wynik rozpoznania w widoku podglądu:
+
+- usunąć tag,
+- zmienić jego typ,
+- dodać nowy tag do zaznaczonego fragmentu tekstu.
+
+Dzięki temu identyfikacja może być uruchamiana już na poprawionym przez użytkownika TEI-XML.
+
+### 4. Identyfikacja encji
+
+Jeżeli użytkownik wybierze `Identyfikuj encje`, aplikacja wysyła aktualny XML do endpointu `POST /identify`.
+
+Ten etap dotyczy tylko `persName` i `placeName`. Tagi `date`, `roleName` i `orgName` nie są linkowane do zewnętrznych baz referencyjnych.
+
+Na wejściu etapu identyfikacji aplikacja:
+
+- tworzy nowy plik logu diagnostycznego,
+- wyciąga zawartość sekcji `<body>` z TEI-XML,
+- wykrywa lata obecne w całym dokumencie, aby pomóc przy ocenie kandydatów osobowych.
+
+### 5. Iteracja po encjach i cache w obrębie dokumentu
+
+Dla każdego znacznika `persName` i `placeName` aplikacja:
+
+- pobiera surface form encji,
 - ustala najbliższy kontekst tekstowy,
-- sprawdza lokalny cache wyników, aby nie rozwiązywać wielokrotnie tej samej encji w obrębie jednego dokumentu.
+- sprawdza podręczny cache wyników dla bieżącego dokumentu.
 
-Jeżeli wcześniej udało się już skutecznie rozstrzygnąć identyczną encję, wynik jest używany ponownie.
+Jeżeli ta sama encja została już wcześniej skutecznie rozstrzygnięta w danym XML-u, wynik jest używany ponownie bez powtarzania pełnej procedury identyfikacyjnej.
 
-### 4. Analiza formy encji
+### 6. Analiza formy encji
 
 Jeżeli encja nie została jeszcze rozstrzygnięta, uruchamiany jest pipeline `link_entity(...)`.
 
-Najpierw przygotowywana jest pomocnicza analiza, będąca bazą do wyszukiwania. Obejmuje ona między innymi:
+Najpierw Gemini przygotowuje pomocniczą analizę formy, obejmującą między innymi:
 
 - ostrożnie znormalizowaną formę `normalized_best`,
 - warianty lematyczne i powierzchniowe,
 - rozpoznane urzędy lub funkcje,
-- wskazówki lokalizacyjne związane z encją,
+- wskazówki miejscowe i relacyjne,
 - krótkie wskazówki kontekstowe,
-- ewentualne daty występujące w kontekście encji i w całym dokumencie.
+- lata wykryte w kontekście encji i w całym dokumencie.
 
-### 5. Budowa planu zapytań
+Na tej podstawie budowany jest plan zapytań do źródeł referencyjnych.
 
-Na podstawie analizy formy budowany jest zestaw zapytań do źródeł referencyjnych.
+### 7. Zbieranie kandydatów
 
-Plan może obejmować:
+W pierwszej kolejności aplikacja szuka kandydatów w wyspecjalizowanych źródłach historycznych:
 
-- formę dokładnie taką, jak w tekście,
-- formę znormalizowaną,
-- polskie odpowiedniki często spotykanych nazw,
-- połączenia typu imię plus urząd,
-- połączenia typu imię plus miejsce,
-- bardziej specyficzne warianty, jeśli wynikają z kontekstu.
+- `WikiHum`,
+- `va.wiki.kul.pl`.
 
-### 6. Zbieranie kandydatów
+Wyszukiwanie odbywa się przez `Special:Search` z prostym rozmyciem (`~2`). Następnie:
 
-W pierwszej kolejności aplikacja szuka kandydatów w wyspecjalizowanych historycznych bazach referencyjnych:
+- przez API Wikibase pobierane są dane kandydatów,
+- lista filtrowana jest po typie encji,
+- kandydaci są deduplikowani i porządkowani.
 
-- w `WikiHum`,
-- w `va.wiki.kul.pl`.
+Jeżeli wyspecjalizowane źródła nie zwrócą kandydatów, albo Gemini nie wybierze żadnego z nich, aplikacja wykonuje kolejną próbę z kandydatami pobranymi z `Wikidata`.
 
-Wyszukiwanie odbywa się przez `Special:Search` z prostym rozmyciem (`~2`). Następnie, jeżeli wyszukiwanie zwróciło listę kandydatów do identyfikacji:
+### 8. Ocena kandydatów i wybór przez Gemini
 
-- przez API Wikibase pobierane są ich dane,
-- lista filtrowana jest po typie encji na podstawie `instance of`,
-- lista porządkowana jest według jakości dopasowania nazwy, zgodności chronologicznej i specyficzności zapytania.
+Dla `persName` kandydaci są dodatkowo oceniani chronologicznie na podstawie lat z dokumentu i dat życia pobranych z danych referencyjnych. Dla `placeName` chronologia nie jest używana.
 
-Jeżeli bazy historyczne nie zwrócą wyników, aplikacja przechodzi do wyszukiwania w `Wikidata`.
+Do końcowego rozstrzygnięcia Gemini otrzymuje między innymi:
 
-### 7. Ocena chronologiczna kandydatów
+- kontekst encji,
+- warianty nazwy,
+- wskazówki urzędowe lub miejscowe,
+- opisy, aliasy i wybrane fakty z właściwości encji,
+- dla osób także ocenę chronologiczną kandydatów.
 
-Dla `persName` aplikacja próbuje porównać lata z kontekstu dokumentu z datami życia kandydata pobranymi z właściwości encji.
+Model zwraca:
 
-Na tej podstawie kandydat może zostać oceniony jako:
-
-- zgodny chronologicznie,
-- niejednoznaczny chronologicznie,
-- sprzeczny z kontekstem.
-
-Ten etap pozwala uporządkować kandydatów i dostarczyć Gemini lepszego materiału do rozstrzygnięcia.
-
-### 8. Wybór najlepszego kandydata
-
-Gdy lista kandydatów jest gotowa przekazywana jest do Gemini wraz z:
-
-- kontekstem encji,
-- wariantami nazwy,
-- urzędami i wskazówkami miejscowymi,
-- oceną chronologiczną,
-- opisami, aliasami i wybranymi faktami z właściwości encji.
-
-Model ma wybrać:
-
-- pełny URL najlepszego kandydata,
-- albo `NONE`, jeśli nie ma wystarczająco dobrego dopasowania.
+- `selected_url`, jeśli wybór jest wystarczająco pewny,
+- albo `NONE`, jeśli żaden kandydat nie pasuje dostatecznie dobrze,
+- krótkie uzasadnienie oraz listę sygnałów, które wpłynęły na decyzję.
 
 Jeżeli wybór się powiedzie, encja dostaje:
 
@@ -150,14 +174,16 @@ Jeżeli wybór się powiedzie, encja dostaje:
 
 Jeżeli nie, pozostaje samo `key`.
 
-### 9. Dodatkowe próby rozstrzygnięcia
+### 9. Dodatkowe próby rozstrzygnięcia dla osób
 
-Jeżeli model nie mógł zidentyfikować tagu na podstawie listy kandydatów, aplikacja wykonuje jeszcze jedną próbę identyfikacji na podstawie przeszukiwania Wikipedii (polskiej wersji językowej).
+Dla części encji osobowych aplikacja może uruchomić dodatkowy fallback oparty o polską Wikipedię.
 
-- budowane są bardziej “encyklopedyczne” polskie zapytania,
-- aplikacja pobiera tytuł i lead artykułu z Wikipedii,
-- przekazuje wyniki modelowi Gemini do analizy.
-- jeżeli 
+W tym wariancie:
+
+- budowane są bardziej encyklopedyczne polskie zapytania,
+- pobierane są tytuły, `pageprops` i leady artykułów,
+- wyniki są mapowane na odpowiadające im rekordy Wikidaty,
+- Gemini dostaje dodatkowy materiał do ponownego rozstrzygnięcia.
 
 ### 10. Końcowy wynik
 
@@ -167,7 +193,8 @@ Po przejściu przez wszystkie encje aplikacja:
 - składa końcowy dokument TEI-XML,
 - przygotowuje listę encji rozstrzygniętych,
 - przygotowuje listę encji nierozstrzygniętych,
-- wyświetla wyniki na stronie, pozwalając na pobranie/skopiowanie pliku TEI-XML
+- udostępnia pełny log diagnostyczny oraz fragmenty logu dla poszczególnych encji,
+- wyświetla wynik w interfejsie, umożliwiając pobranie lub skopiowanie XML.
 
 ### Wymagania
 
