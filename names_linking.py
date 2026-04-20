@@ -19,6 +19,7 @@ SUPPORTED_GEMINI_MODELS = {
     "gemini-3.1-flash-lite-preview": "Gemini 3.1 Flash Lite Preview",
     "gemini-3-flash-preview": "Gemini 3 Flash Preview",
 }
+PREFERRED_WIKIBASE_LANGUAGES = ("pl", "la", "en", "de", "hu", "cs")
 TIMEOUT_MS = 120 * 1000
 MAX_REASONABLE_LIFESPAN_YEARS = 100
 POSTHUMOUS_CONTEXT_GRACE_YEARS = 25
@@ -182,6 +183,33 @@ HUMAN_TYPE_MARKERS = {
     "human", "człowiek", "czlowiek", "person", "osoba", "persona", "czlowiek"
 }
 
+NON_PERSON_CONCEPT_MARKERS = {
+    "affinal",
+    "ancestor",
+    "aunt",
+    "babcia",
+    "cousin",
+    "descendant",
+    "dziadek",
+    "family relationship",
+    "grandfather",
+    "grandmother",
+    "kinship",
+    "kinship term",
+    "mother's sibling",
+    "nephew",
+    "niece",
+    "parent",
+    "pokrewieństwo",
+    "relative",
+    "relationship",
+    "relation",
+    "rodzaj pokrewieństwa",
+    "sibling",
+    "uncle",
+    "wuj",
+}
+
 PLACE_TYPE_MARKERS = {
     "administrative unit",
     "administrative territorial entity",
@@ -266,6 +294,7 @@ DEFAULT_POLISH_PLACE_EQUIVALENTS = {
     "prussia": "Prusy",
     "russia": "Ruś",
     "ruthenia": "Ruś",
+    "vesprimiensis": "Veszprém",
     "thorun": "Toruń",
     "torunia": "Toruń",
 }
@@ -290,6 +319,7 @@ DEFAULT_POLISH_PLACE_ADJECTIVAL_EQUIVALENTS = {
     "prussia": "pruski",
     "russia": "ruski",
     "ruthenia": "ruski",
+    "vesprimiensis": "veszprémski",
     "thorun": "toruński",
     "torunia": "toruński",
 }
@@ -1123,8 +1153,8 @@ def dedupe_candidates(candidates):
 
 
 def get_best_lang_value(multilang_map, fallback=""):
-    """Wybiera preferowaną wartość językową: polską, potem łacińską."""
-    for lang in ("pl", "la"):
+    """Wybiera preferowaną wartość językową z listy obsługiwanych języków."""
+    for lang in PREFERRED_WIKIBASE_LANGUAGES:
         value = multilang_map.get(lang)
         if value:
             return value
@@ -1135,7 +1165,7 @@ def extract_multilang_values(multilang_map):
     """Spłaszcza mapę wielojęzyczną do listy unikalnych wartości tekstowych."""
     values = []
     seen = set()
-    for lang in ("pl", "la"):
+    for lang in PREFERRED_WIKIBASE_LANGUAGES:
         value = normalize_whitespace(multilang_map.get(lang, ""))
         if not value:
             continue
@@ -1148,9 +1178,9 @@ def extract_multilang_values(multilang_map):
 
 
 def build_multilang_map(data):
-    """Wyciąga z odpowiedzi Wikibase etykiety lub opisy w językach pl i la."""
+    """Wyciąga z odpowiedzi Wikibase etykiety lub opisy w obsługiwanych językach."""
     result = {}
-    for lang in ("pl", "la"):
+    for lang in PREFERRED_WIKIBASE_LANGUAGES:
         value = normalize_whitespace(data.get(lang, {}).get("value", ""))
         if value:
             result[lang] = value
@@ -1160,7 +1190,7 @@ def build_multilang_map(data):
 def build_alias_map(data):
     """Buduje znormalizowaną mapę aliasów z odpowiedzi API Wikibase."""
     result = {}
-    for lang in ("pl", "la"):
+    for lang in PREFERRED_WIKIBASE_LANGUAGES:
         aliases = []
         seen = set()
         for alias in data.get(lang, []):
@@ -1710,7 +1740,7 @@ def fetch_entities_map(source_config, entity_ids):
         params = {
             "action": "wbgetentities",
             "ids": "|".join(batch),
-            "languages": "pl|la|en",
+            "languages": "|".join(PREFERRED_WIKIBASE_LANGUAGES),
             "format": "json",
             "props": "labels|descriptions|aliases|claims",
         }
@@ -2154,12 +2184,30 @@ def candidate_type_text(candidate):
     return " ".join(candidate.get("instance_of_texts", [])).casefold()
 
 
+def candidate_non_person_text(candidate):
+    """Łączy pola kandydata pomocne przy wykluczaniu relacji i pojęć niebędących osobami."""
+    values = [candidate.get("name", ""), candidate.get("desc", "")]
+    values.extend(candidate.get("instance_of_texts", []))
+    values.extend(extract_multilang_values(candidate.get("descriptions", {})))
+    return " ".join(normalize_whitespace(value) for value in values if normalize_whitespace(value)).casefold()
+
+
 def candidate_is_human(candidate, source_config):
     """Sprawdza, czy kandydat wygląda na osobę w danym źródle."""
     instance_of_ids = set(candidate.get("instance_of_ids", []))
+    non_person_text = candidate_non_person_text(candidate)
+    if any(marker in non_person_text for marker in NON_PERSON_CONCEPT_MARKERS):
+        return False
     if instance_of_ids & source_config["person_type_ids"]:
         return True
+    if instance_of_ids & source_config.get("place_type_ids", set()):
+        return False
+
     type_text = candidate_type_text(candidate)
+    if any(marker in type_text for marker in PLACE_TYPE_MARKERS):
+        return False
+    if instance_of_ids:
+        return False
     return any(marker in type_text for marker in HUMAN_TYPE_MARKERS)
 
 
@@ -2227,7 +2275,7 @@ def expand_office_terms(office_terms):
 
 
 def expand_place_terms(place_terms):
-    """Dodaje prostsze warianty określeń miejscowych przydatne w wyszukiwaniu."""
+    """Dodaje prostsze i zmodernizowane warianty określeń miejscowych przydatne w wyszukiwaniu."""
     expansions = []
     seen = set()
 
@@ -2243,7 +2291,17 @@ def expand_place_terms(place_terms):
             if len(tokens) >= 2:
                 variants.append(" ".join(tokens[-2:]))
 
+        expanded_variants = []
         for variant in variants:
+            expanded_variants.append(variant)
+            polish_equivalent = get_polish_equivalent(variant, "placeName")
+            if polish_equivalent:
+                expanded_variants.append(polish_equivalent)
+            adjectival_equivalent = get_polish_place_adjectival_equivalent(variant)
+            if adjectival_equivalent:
+                expanded_variants.append(adjectival_equivalent)
+
+        for variant in expanded_variants:
             folded = variant.casefold()
             if folded in seen:
                 continue
@@ -3238,7 +3296,10 @@ def candidate_query_specificity(candidate, entity_analysis):
     """Punktuje kandydatów trafionych przez bardziej informacyjne zapytania."""
     score = 0
     office_terms = [normalize_for_lookup(term) for term in entity_analysis.get("office_terms", [])]
-    place_terms = [normalize_for_lookup(term) for term in entity_analysis.get("place_terms", [])]
+    place_terms = [
+        normalize_for_lookup(term)
+        for term in expand_place_terms(entity_analysis.get("place_terms", []))
+    ]
 
     for query in candidate.get("matched_queries", []):
         query_norm = normalize_for_lookup(query)
@@ -3470,7 +3531,7 @@ def format_candidate_for_prompt(candidate, entity_analysis=None):
     entity_analysis = entity_analysis or {}
     labels = extract_multilang_values(candidate.get("labels", {}))
     aliases = []
-    for lang in ("pl", "la"):
+    for lang in PREFERRED_WIKIBASE_LANGUAGES:
         aliases.extend(candidate.get("aliases", {}).get(lang, []))
     aliases = _normalize_string_list(aliases, min_length=2)[:12]
     instance_of_texts = candidate.get("instance_of_texts", [])[:8]
