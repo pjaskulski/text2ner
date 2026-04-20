@@ -21,6 +21,7 @@ SUPPORTED_GEMINI_MODELS = {
 }
 TIMEOUT_MS = 120 * 1000
 MAX_REASONABLE_LIFESPAN_YEARS = 100
+POSTHUMOUS_CONTEXT_GRACE_YEARS = 25
 ENABLE_WIKIDATA_SEMANTIC_FALLBACK = False
 WIKIDATA_SPARQL_URL = "https://query.wikidata.org/sparql"
 PLWIKI_API_URL = "https://pl.wikipedia.org/w/api.php"
@@ -69,8 +70,10 @@ PLWIKI_PAGE_CACHE = {}
 
 DATE_MONTH_TOKENS = {
     "ian": 1,
+    "ianu": 1,
     "ianuarii": 1,
     "ianuarius": 1,
+    "janu": 1,
     "january": 1,
     "januarii": 1,
     "januarius": 1,
@@ -79,6 +82,7 @@ DATE_MONTH_TOKENS = {
     "stycznia": 1,
     "styczeń": 1,
     "feb": 2,
+    "febr": 2,
     "februarii": 2,
     "februarius": 2,
     "february": 2,
@@ -87,11 +91,13 @@ DATE_MONTH_TOKENS = {
     "luty": 2,
     "martii": 3,
     "martius": 3,
+    "mart": 3,
     "march": 3,
     "marzec": 3,
     "marca": 3,
     "marzec": 3,
     "april": 4,
+    "apr": 4,
     "aprilis": 4,
     "aprili": 4,
     "kwietnia": 4,
@@ -105,39 +111,54 @@ DATE_MONTH_TOKENS = {
     "maj": 5,
     "iunii": 6,
     "iunius": 6,
+    "iun": 6,
     "junii": 6,
     "junius": 6,
+    "jun": 6,
     "june": 6,
     "czerwca": 6,
     "czerwiec": 6,
     "iulii": 7,
     "iulius": 7,
+    "iul": 7,
     "julii": 7,
     "julius": 7,
+    "jul": 7,
     "july": 7,
     "lipca": 7,
     "lipiec": 7,
     "augusti": 8,
     "augustus": 8,
+    "aug": 8,
     "august": 8,
     "sierpnia": 8,
     "sierpień": 8,
+    "sept": 9,
+    "septemb": 9,
+    "septem": 9,
     "septembris": 9,
     "september": 9,
     "septembra": 9,
     "wrzesnia": 9,
     "września": 9,
     "wrzesień": 9,
+    "oct": 10,
+    "octob": 10,
     "octobris": 10,
     "october": 10,
     "oktober": 10,
     "pazdziernika": 10,
     "października": 10,
     "październik": 10,
+    "nov": 11,
+    "novemb": 11,
     "novembris": 11,
     "november": 11,
     "listopada": 11,
     "listopad": 11,
+    "dec": 12,
+    "decemb": 12,
+    "decembr": 12,
     "decembris": 12,
     "december": 12,
     "grudnia": 12,
@@ -596,6 +617,33 @@ def tokenize_for_match(value):
     return [token for token in cleaned.split() if len(token) > 2]
 
 
+def has_posthumous_context(context, context_clues=None):
+    """Ocena, czy kontekst wskazuje, że dokument mówi o osobie już zmarłej."""
+    clue_text = " ".join(normalize_whitespace(value) for value in context_clues or []).casefold()
+    context_text = normalize_for_lookup(context)
+    markers = {
+        "bone memorie",
+        "bonae memorie",
+        "bonae memoriae",
+        "felicis recordacionis",
+        "felicis recordationis",
+        "recordacionis",
+        "recordationis",
+        "quondam",
+        "olim",
+        "osoba zmarła",
+        "osoba zmarla",
+        "zmarła",
+        "zmarla",
+        "zmarły",
+        "zmarly",
+        "spadku po nim",
+        "spadku po niej",
+        "posthum",
+    }
+    return any(marker in clue_text or marker in context_text for marker in markers)
+
+
 def build_casefold_lookup(value):
     """Tworzy najprostszą wersję tekstu do porównań case-insensitive."""
     return normalize_whitespace(value).casefold()
@@ -765,6 +813,7 @@ def build_ner_tagging_rules(enabled_tag_types):
         rules.extend([
             "5. Użyj znacznika <date> dla dat, jeśli w tekście rzeczywiście występuje zapis daty.",
             "5a. Jeśli można bezpiecznie znormalizować datę, dodaj atrybut when w formacie ISO: pełna data <date when=\"1446-07-04\">4 iulii 1446</date>, rok i miesiąc <date when=\"1446-07\">iulii 1446</date>, sam rok <date when=\"1446\">1446</date>.",
+            "5aa. Dotyczy to także łacińskich dat kalendarza rzymskiego, np. <date when=\"1393-11-18\">XIIII kalendis decemb</date>, jeśli rok wynika jasno z tego samego zapisu lub z najbliższego kontekstu.",
             "5b. Jeśli data jest zbyt niejednoznaczna, nadal możesz użyć <date>, ale bez atrybutu when.",
             "5c. Nie twórz daty z samych liczb porządkowych, numerów dokumentu lub innych liczb, które nie są rzeczywistą datą.",
         ])
@@ -879,6 +928,47 @@ def augment_with_polish_equivalents(tag_type, values):
         augmented.append(polish_equivalent)
 
     return _normalize_string_list(augmented)
+
+
+def get_grounded_person_name_tokens(name, context, normalized_best):
+    """Zbiera tokeny osobowe zakotwiczone w nazwie źródłowej lub w lokalnym kontekście."""
+    grounded_tokens = set()
+    for source_text in (name, context, normalized_best):
+        grounded_tokens.update(tokenize_for_match(source_text))
+        for raw_token in re.findall(r"[\w-]+", normalize_whitespace(source_text), flags=re.UNICODE):
+            polish_equivalent = get_polish_equivalent(raw_token, "persName")
+            if polish_equivalent:
+                grounded_tokens.update(tokenize_for_match(polish_equivalent))
+    return grounded_tokens
+
+
+def is_grounded_person_name_variant(variant, grounded_tokens, baseline_token_count):
+    """Sprawdza, czy wariant osoby nie dopowiada nowych członów nieobecnych w tekście i kontekście."""
+    variant_tokens = tokenize_for_match(variant)
+    if not variant_tokens:
+        return False
+    if len(variant_tokens) <= baseline_token_count:
+        return True
+    return all(token in grounded_tokens for token in variant_tokens)
+
+
+def filter_groundless_person_variants(name, context, normalized_best, variants):
+    """Usuwa warianty osoby, które dopowiadają nowe człony niewynikające z tekstu ani kontekstu."""
+    grounded_tokens = get_grounded_person_name_tokens(name, context, normalized_best)
+    baseline_token_count = max(
+        len(tokenize_for_match(name)),
+        len(tokenize_for_match(normalized_best)),
+        1,
+    )
+
+    filtered_variants = []
+    removed_variants = []
+    for variant in variants or []:
+        if is_grounded_person_name_variant(variant, grounded_tokens, baseline_token_count):
+            filtered_variants.append(variant)
+        else:
+            removed_variants.append(variant)
+    return filtered_variants, removed_variants
 
 
 def get_polish_place_adjectival_equivalent(value):
@@ -1113,6 +1203,99 @@ def format_time_value(raw_value):
     return raw_value
 
 
+def extract_wikibase_time_year(raw_time):
+    """Wyciąga sam rok z pola `time` zwróconego przez Wikibase."""
+    if isinstance(raw_time, dict):
+        raw_time = raw_time.get("time", "")
+    year_text = format_time_value(raw_time)
+    if not year_text or not re.fullmatch(r"-?\d{3,4}", year_text):
+        return None, None
+    return int(year_text), year_text
+
+
+def get_wikibase_time_precision(raw_time_value):
+    """Normalizuje precyzję czasu Wikibase do liczby całkowitej albo `None`."""
+    if not isinstance(raw_time_value, dict):
+        return None
+    precision = raw_time_value.get("precision")
+    try:
+        return int(precision) if precision is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def compute_wikibase_year_bounds(year, precision):
+    """Zamienia rok i precyzję Wikibase na ostrożny zakres lat."""
+    if year is None:
+        return None, None
+    if precision is None or precision >= 9:
+        return year, year
+    if precision == 8:
+        start_year = year if year >= 0 else year - 9
+        return start_year, start_year + 9
+    if precision == 7:
+        if year <= 0:
+            return None, None
+        start_year = year - ((year - 1) % 100)
+        return start_year, start_year + 99
+    if precision == 6:
+        if year <= 0:
+            return None, None
+        start_year = year - ((year - 1) % 1000)
+        return start_year, start_year + 999
+    return None, None
+
+
+def extract_life_year_data(raw_time_value):
+    """Zwraca pełniejszy opis roku życia: dokładny rok albo zakres wynikający z precyzji."""
+    year, year_text = extract_wikibase_time_year(raw_time_value)
+    if year is None:
+        return {
+            "year": None,
+            "year_min": None,
+            "year_max": None,
+            "display": None,
+            "precision": None,
+        }
+
+    precision = get_wikibase_time_precision(raw_time_value)
+    year_min, year_max = compute_wikibase_year_bounds(year, precision)
+    if year_min is None or year_max is None:
+        return {
+            "year": None,
+            "year_min": None,
+            "year_max": None,
+            "display": None,
+            "precision": precision,
+        }
+
+    display = year_text
+    exact_year = year
+    if year_min != year_max:
+        display = f"{year_min}-{year_max}"
+        exact_year = None
+
+    return {
+        "year": exact_year,
+        "year_min": year_min,
+        "year_max": year_max,
+        "display": display,
+        "precision": precision,
+    }
+
+
+def extract_precise_life_year(raw_time_value):
+    """Zwraca dokładny rok życia tylko wtedy, gdy Wikibase podaje precyzję co najmniej do roku."""
+    life_year_data = extract_life_year_data(raw_time_value)
+    if life_year_data["year_min"] != life_year_data["year_max"]:
+        return None
+    if life_year_data["precision"] is not None and life_year_data["precision"] < 9:
+        return None
+    if life_year_data["year"] is None:
+        return None
+    return life_year_data["year"]
+
+
 def extract_years_from_text(text, min_year=900, max_year=1800):
     """Zbiera unikalne lata z tekstu w zadanym przedziale historycznym."""
     years = []
@@ -1181,26 +1364,104 @@ def normalize_iso_date_value(value):
     return None
 
 
-def infer_iso_date_value_from_text(text):
+def extract_explicit_year_from_text(text):
+    """Wyciąga czterocyfrowy rok bezpośrednio zapisany w tekście."""
+    normalized_text = normalize_whitespace(text)
+    if not normalized_text:
+        return None
+    year_match = re.search(r"(?<!\d)(\d{4})(?!\d)", normalized_text)
+    if not year_match:
+        return None
+    return int(year_match.group(1))
+
+
+def find_month_token_in_text(normalized_lookup_text):
+    """Zwraca `(month_number, matched_token)` dla pierwszego rozpoznanego miesiąca w tekście."""
+    for month_token, month_number in sorted(DATE_MONTH_TOKENS.items(), key=lambda item: (-len(item[0]), item[0])):
+        pattern = rf"\b{re.escape(month_token)}\b"
+        if re.search(pattern, normalized_lookup_text):
+            return month_number, month_token
+    return None, None
+
+
+def get_roman_anchor_day(anchor_name, month):
+    """Zwraca dzień miesiąca odpowiadający Kalendom, Nonom albo Idom."""
+    if anchor_name == "kalends":
+        return 1
+    if anchor_name == "nones":
+        return 7 if month in {3, 5, 7, 10} else 5
+    if anchor_name == "ides":
+        return 15 if month in {3, 5, 7, 10} else 13
+    return None
+
+
+def infer_roman_calendar_iso_date(text, fallback_year=None):
+    """Próbuje zinterpretować łacińską datę w stylu rzymskim, np. `XIIII kalendis decemb`."""
+    normalized_text = normalize_whitespace(text)
+    if not normalized_text:
+        return None
+
+    lowered_text = normalize_for_lookup(normalized_text)
+    year = extract_explicit_year_from_text(normalized_text) or fallback_year
+    if year is None:
+        return None
+
+    roman_date_match = re.search(
+        r"\b(?P<count>\d{1,2}|[ivxlcdm]+)\b\s+"
+        r"(?P<anchor>kalend(?:is|as|ae|a)?|non(?:is|as|ae|a)?|id(?:ibus|us|as|a)?)\b",
+        lowered_text,
+        flags=re.IGNORECASE,
+    )
+    if not roman_date_match:
+        return None
+
+    month, _ = find_month_token_in_text(lowered_text)
+    if month is None:
+        return None
+
+    anchor_token = roman_date_match.group("anchor")
+    if anchor_token.startswith("kalend"):
+        anchor_name = "kalends"
+    elif anchor_token.startswith("non"):
+        anchor_name = "nones"
+    else:
+        anchor_name = "ides"
+
+    count_token = roman_date_match.group("count")
+    count = int(count_token) if count_token.isdigit() else roman_to_int(count_token)
+    if not count:
+        return None
+
+    anchor_day = get_roman_anchor_day(anchor_name, month)
+    if anchor_day is None:
+        return None
+
+    anchor_date = None
+    if anchor_name == "kalends":
+        anchor_date = datetime(year, month, anchor_day)
+    else:
+        anchor_date = datetime(year, month, anchor_day)
+
+    calculated_date = anchor_date - timedelta(days=count - 1)
+    return calculated_date.strftime("%Y-%m-%d")
+
+
+def infer_iso_date_value_from_text(text, fallback_year=None):
     """Próbuje odczytać z tekstu datę w postaci ISO do użycia w atrybucie `when`."""
     normalized_text = normalize_whitespace(text)
     if not normalized_text:
         return None
 
-    year_match = re.search(r"(?<!\d)(\d{4})(?!\d)", normalized_text)
-    if not year_match:
+    year = extract_explicit_year_from_text(normalized_text) or fallback_year
+    if year is None:
         return None
-    year = int(year_match.group(1))
 
     lowered_text = normalize_for_lookup(normalized_text)
-    month = None
-    month_pattern = None
-    for month_token, month_number in DATE_MONTH_TOKENS.items():
-        pattern = rf"\b{re.escape(month_token)}\b"
-        if re.search(pattern, lowered_text):
-            month = month_number
-            month_pattern = month_token
-            break
+    roman_calendar_date = infer_roman_calendar_iso_date(normalized_text, fallback_year=year)
+    if roman_calendar_date:
+        return roman_calendar_date
+
+    month, month_pattern = find_month_token_in_text(lowered_text)
 
     if month is None:
         return f"{year:04d}"
@@ -1223,13 +1484,34 @@ def infer_iso_date_value_from_text(text):
     return f"{year:04d}-{month:02d}"
 
 
+def resolve_fallback_year_for_date_tag(tag, document_years):
+    """Szuka możliwie jednoznacznego roku dla daty, gdy sam tag go nie zawiera."""
+    tag_text = tag.get_text(" ")
+    explicit_year = extract_explicit_year_from_text(tag_text)
+    if explicit_year is not None:
+        return explicit_year
+
+    parent_block = tag.find_parent(["p", "ab", "note", "head", "div"])
+    if parent_block:
+        context_years = extract_years_from_text(parent_block.get_text(" "))
+        if len(context_years) == 1:
+            return context_years[0]
+
+    if len(document_years) == 1:
+        return document_years[0]
+
+    return None
+
+
 def normalize_tagged_dates(tagged_xml):
     """Waliduje i uzupełnia atrybuty `when` w tagach `date` zwróconych przez model."""
     soup = BeautifulSoup(tagged_xml, "xml")
+    document_years = extract_years_from_text(soup.get_text(" "))
     for tag in soup.find_all("date"):
         normalized_when = normalize_iso_date_value(tag.get("when"))
         if not normalized_when:
-            normalized_when = infer_iso_date_value_from_text(tag.get_text())
+            fallback_year = resolve_fallback_year_for_date_tag(tag, document_years)
+            normalized_when = infer_iso_date_value_from_text(tag.get_text(), fallback_year=fallback_year)
 
         if normalized_when:
             tag["when"] = normalized_when
@@ -1315,7 +1597,7 @@ def review_tagged_xml_with_gemini(raw_text, tagged_xml, enabled_tag_types=None):
     return generate_tagged_xml_with_gemini(prompt, enabled_tag_types=enabled_tag_types)
 
 
-def normalize_form_analysis(name, tag_type, analysis):
+def normalize_form_analysis(name, tag_type, analysis, context=""):
     """Porządkuje odpowiedź Gemini do jednolitej struktury analizy encji."""
     fallback = {
         "surface": name,
@@ -1345,6 +1627,26 @@ def normalize_form_analysis(name, tag_type, analysis):
     )
     lemma_candidates = augment_with_polish_equivalents(tag_type, lemma_candidates)
     surface_variants = augment_with_polish_equivalents(tag_type, surface_variants)
+
+    if tag_type == "persName":
+        lemma_candidates, removed_lemma_candidates = filter_groundless_person_variants(
+            name,
+            context,
+            normalized_best,
+            lemma_candidates,
+        )
+        surface_variants, removed_surface_variants = filter_groundless_person_variants(
+            name,
+            context,
+            normalized_best,
+            surface_variants,
+        )
+        removed_variants = _normalize_string_list(removed_lemma_candidates + removed_surface_variants, min_length=2)
+        if removed_variants:
+            diagnostic_log(
+                f"Usunięto niezakotwiczone warianty osoby dla '{name}': {removed_variants}"
+            )
+
     office_terms = _normalize_string_list(analysis.get("office_terms", []), min_length=3)
     place_terms = _normalize_string_list(analysis.get("place_terms", []), min_length=3)
     context_clues = _normalize_string_list(analysis.get("context_clues", []), min_length=3)
@@ -1662,6 +1964,8 @@ def extract_person_life_years(entity, property_entities):
 
     birth_years = []
     death_years = []
+    birth_ranges = []
+    death_ranges = []
 
     for property_id, statements in entity.get("claims", {}).items():
         property_entity = property_entities.get(property_id, {})
@@ -1683,16 +1987,60 @@ def extract_person_life_years(entity, property_entities):
             datavalue = mainsnak.get("datavalue")
             if not datavalue or datavalue.get("type") != "time":
                 continue
-            year_text = format_time_value(datavalue.get("value", {}).get("time", ""))
-            if not year_text or not re.fullmatch(r"-?\d{3,4}", year_text):
+            life_year_data = extract_life_year_data(datavalue.get("value", {}))
+            if life_year_data["year_min"] is None or life_year_data["year_max"] is None:
                 continue
-            year = int(year_text)
-            if year not in target_list:
-                target_list.append(year)
+            exact_year = life_year_data["year"]
+            if exact_year is not None and exact_year not in target_list:
+                target_list.append(exact_year)
+
+            target_ranges = birth_ranges if target_list is birth_years else death_ranges
+            year_range = (
+                life_year_data["year_min"],
+                life_year_data["year_max"],
+                life_year_data["display"],
+                life_year_data["precision"],
+            )
+            if year_range not in target_ranges:
+                target_ranges.append(year_range)
 
     birth_year = min(birth_years) if birth_years else None
     death_year = max(death_years) if death_years else None
-    return birth_year, death_year
+
+    birth_year_min = min((item[0] for item in birth_ranges), default=None)
+    birth_year_max = max((item[1] for item in birth_ranges), default=None)
+    death_year_min = min((item[0] for item in death_ranges), default=None)
+    death_year_max = max((item[1] for item in death_ranges), default=None)
+
+    birth_display = None
+    death_display = None
+    if birth_ranges:
+        birth_display = min(
+            birth_ranges,
+            key=lambda item: (
+                item[3] if item[3] is not None else 99,
+                item[0],
+            ),
+        )[2]
+    if death_ranges:
+        death_display = max(
+            death_ranges,
+            key=lambda item: (
+                item[3] if item[3] is not None else -1,
+                item[1],
+            ),
+        )[2]
+
+    return {
+        "birth_year": birth_year,
+        "death_year": death_year,
+        "birth_year_min": birth_year_min,
+        "birth_year_max": birth_year_max,
+        "death_year_min": death_year_min,
+        "death_year_max": death_year_max,
+        "birth_display": birth_display,
+        "death_display": death_display,
+    }
 
 
 def build_candidate_from_entity(source_config, entity_id, entity, property_entities, referenced_entities):
@@ -1724,12 +2072,16 @@ def build_candidate_from_entity(source_config, entity_id, entity, property_entit
         "claim_facts": build_claim_facts(entity, property_entities, referenced_entities),
         "birth_year": None,
         "death_year": None,
+        "birth_year_min": None,
+        "birth_year_max": None,
+        "death_year_min": None,
+        "death_year_max": None,
+        "birth_display": None,
+        "death_display": None,
         "matched_queries": [],
     }
     if candidate_is_human(candidate, source_config):
-        birth_year, death_year = extract_person_life_years(entity, property_entities)
-        candidate["birth_year"] = birth_year
-        candidate["death_year"] = death_year
+        candidate.update(extract_person_life_years(entity, property_entities))
     candidate["desc"] = get_best_lang_value(descriptions_map, "Brak opisu")
     return candidate
 
@@ -2685,63 +3037,117 @@ def should_use_temporal_matching(entity_analysis):
     return (entity_analysis or {}).get("tag_type") == "persName"
 
 
+def get_candidate_life_bounds(candidate):
+    """Zwraca możliwy zakres lat urodzenia i śmierci kandydata."""
+    birth_year = candidate.get("birth_year")
+    death_year = candidate.get("death_year")
+    return {
+        "birth_min": candidate.get("birth_year_min", birth_year),
+        "birth_max": candidate.get("birth_year_max", birth_year),
+        "death_min": candidate.get("death_year_min", death_year),
+        "death_max": candidate.get("death_year_max", death_year),
+    }
+
+
 def assess_candidate_temporal_fit(candidate, entity_analysis):
     """Ocena zgodności chronologicznej kandydata z latami z kontekstu."""
     if not should_use_temporal_matching(entity_analysis):
         return {"status": "not_applicable", "reason": "not_person_entity"}
 
     context_years = sorted(entity_analysis.get("context_years", []))
+    posthumous_context = bool((entity_analysis or {}).get("posthumous_context"))
     if not context_years:
         return {"status": "unknown", "reason": "no_context_years"}
 
-    birth_year = candidate.get("birth_year")
-    death_year = candidate.get("death_year")
-    if birth_year is None and death_year is None:
+    life_bounds = get_candidate_life_bounds(candidate)
+    birth_min = life_bounds["birth_min"]
+    birth_max = life_bounds["birth_max"]
+    death_min = life_bounds["death_min"]
+    death_max = life_bounds["death_max"]
+
+    if birth_min is None and death_max is None:
         return {"status": "unknown", "reason": "no_life_years"}
 
-    inferred_birth = None
-    inferred_death = None
-    if birth_year is None and death_year is not None:
-        inferred_birth = death_year - MAX_REASONABLE_LIFESPAN_YEARS
-        birth_year = inferred_birth
-    if death_year is None and birth_year is not None:
-        inferred_death = birth_year + MAX_REASONABLE_LIFESPAN_YEARS
-        death_year = inferred_death
+    inferred_birth_upper = None
+    inferred_death_lower = None
+    if birth_min is None and death_max is not None:
+        inferred_birth_upper = death_max - MAX_REASONABLE_LIFESPAN_YEARS
+        birth_min = inferred_birth_upper
+        birth_max = inferred_birth_upper
+    if death_max is None and birth_max is not None:
+        inferred_death_lower = birth_max + MAX_REASONABLE_LIFESPAN_YEARS
+        death_min = inferred_death_lower
+        death_max = inferred_death_lower
 
     min_context_year = min(context_years)
     max_context_year = max(context_years)
 
-    if death_year is not None and min_context_year > death_year:
+    if death_max is not None and min_context_year > death_max:
+        if posthumous_context:
+            year_gap = min_context_year - death_max
+            if year_gap <= POSTHUMOUS_CONTEXT_GRACE_YEARS:
+                return {
+                    "status": "compatible",
+                    "reason": (
+                        f"kontekst jest późniejszy od śmierci kandydata, ale dopuszczalny dla wzmianki pośmiertnej; "
+                        f"różnica {year_gap} lat, maksymalnie {POSTHUMOUS_CONTEXT_GRACE_YEARS}"
+                    ),
+                }
         reason_suffix = ""
-        if inferred_death is not None:
+        if candidate.get("death_year_min") != candidate.get("death_year_max") and candidate.get("death_year_max") is not None:
+            reason_suffix = (
+                f"; zakres możliwej śmierci {candidate.get('death_year_min')}-{candidate.get('death_year_max')}"
+            )
+        elif inferred_death_lower is not None:
             reason_suffix = f"; przyjęto maks. długość życia {MAX_REASONABLE_LIFESPAN_YEARS} lat"
         return {
             "status": "conflict",
-            "reason": f"kontekst po śmierci kandydata ({death_year}){reason_suffix}",
+            "reason": f"kontekst po najpóźniejszej możliwej śmierci kandydata ({death_max}){reason_suffix}",
         }
-    if birth_year is not None and max_context_year < birth_year:
+    if birth_min is not None and max_context_year < birth_min:
         reason_suffix = ""
-        if inferred_birth is not None:
+        if candidate.get("birth_year_min") != candidate.get("birth_year_max") and candidate.get("birth_year_min") is not None:
+            reason_suffix = (
+                f"; zakres możliwego urodzenia {candidate.get('birth_year_min')}-{candidate.get('birth_year_max')}"
+            )
+        elif inferred_birth_upper is not None:
             reason_suffix = f"; przyjęto maks. długość życia {MAX_REASONABLE_LIFESPAN_YEARS} lat"
         return {
             "status": "conflict",
-            "reason": f"kontekst przed narodzinami kandydata ({birth_year}){reason_suffix}",
+            "reason": f"kontekst przed najwcześniejszym możliwym urodzeniem kandydata ({birth_min}){reason_suffix}",
         }
 
-    if inferred_birth is not None:
+    if inferred_birth_upper is not None:
         return {
             "status": "compatible",
             "reason": (
                 f"lata kontekstu mieszczą się w możliwym okresie życia; "
-                f"oszacowano narodziny <= {birth_year} z daty śmierci i limitu {MAX_REASONABLE_LIFESPAN_YEARS} lat"
+                f"oszacowano narodziny <= {birth_min} z daty śmierci i limitu {MAX_REASONABLE_LIFESPAN_YEARS} lat"
             ),
         }
-    if inferred_death is not None:
+    if inferred_death_lower is not None:
         return {
             "status": "compatible",
             "reason": (
                 f"lata kontekstu mieszczą się w możliwym okresie życia; "
-                f"oszacowano śmierć >= {death_year} z daty urodzenia i limitu {MAX_REASONABLE_LIFESPAN_YEARS} lat"
+                f"oszacowano śmierć >= {death_max} z daty urodzenia i limitu {MAX_REASONABLE_LIFESPAN_YEARS} lat"
+            ),
+        }
+
+    if candidate.get("birth_year_min") != candidate.get("birth_year_max") and candidate.get("birth_year_min") is not None:
+        return {
+            "status": "compatible",
+            "reason": (
+                f"lata kontekstu nie wykluczają życia kandydata; "
+                f"zakres możliwego urodzenia {candidate.get('birth_year_min')}-{candidate.get('birth_year_max')}"
+            ),
+        }
+    if candidate.get("death_year_min") != candidate.get("death_year_max") and candidate.get("death_year_min") is not None:
+        return {
+            "status": "compatible",
+            "reason": (
+                f"lata kontekstu nie wykluczają życia kandydata; "
+                f"zakres możliwej śmierci {candidate.get('death_year_min')}-{candidate.get('death_year_max')}"
             ),
         }
 
@@ -2751,9 +3157,15 @@ def assess_candidate_temporal_fit(candidate, entity_analysis):
 def format_candidate_life_span(candidate):
     """Formatuje lata życia kandydata do zwięzłej postaci opisowej."""
     parts = []
-    if candidate.get("birth_year") is not None:
+    birth_display = candidate.get("birth_display")
+    death_display = candidate.get("death_display")
+    if birth_display:
+        parts.append(f"ur. {birth_display}")
+    elif candidate.get("birth_year") is not None:
         parts.append(f"ur. {candidate['birth_year']}")
-    if candidate.get("death_year") is not None:
+    if death_display:
+        parts.append(f"zm. {death_display}")
+    elif candidate.get("death_year") is not None:
         parts.append(f"zm. {candidate['death_year']}")
     if not parts:
         return "brak danych"
@@ -3014,29 +3426,31 @@ Przykład dla miejsca:
         )
 
         analysis = parse_json_object(response.text)
-        normalized = normalize_form_analysis(name, tag_type, analysis)
+        normalized = normalize_form_analysis(name, tag_type, analysis, context=context)
         normalized = validate_form_analysis(name, tag_type, normalized)
         local_context_years = extract_years_from_text(context)
         merged_context_years = sorted(set(local_context_years + list(document_years or [])))
         normalized["context_years"] = merged_context_years
+        normalized["posthumous_context"] = has_posthumous_context(context, normalized.get("context_clues", []))
         diagnostic_log(
             f"Analiza encji '{name}' ({tag_type}): normalized_best='{normalized['normalized_best']}', "
             f"confidence={normalized['confidence_form']}, lemma_candidates={normalized['lemma_candidates']}, "
             f"surface_variants={normalized['surface_variants']}, office_terms={normalized['office_terms']}, "
             f"place_terms={normalized['place_terms']}, context_clues={normalized['context_clues']}, "
-            f"context_years={normalized['context_years']}"
+            f"context_years={normalized['context_years']}, posthumous_context={normalized['posthumous_context']}"
         )
         return normalized
     except Exception as exc:
         print(f"Błąd analizy Gemini dla {name}: {exc}")
-        fallback = normalize_form_analysis(name, tag_type, None)
+        fallback = normalize_form_analysis(name, tag_type, None, context=context)
         local_context_years = extract_years_from_text(context)
         merged_context_years = sorted(set(local_context_years + list(document_years or [])))
         fallback["context_years"] = merged_context_years
+        fallback["posthumous_context"] = has_posthumous_context(context, fallback.get("context_clues", []))
         diagnostic_log(
             f"Fallback analizy encji '{name}' ({tag_type}): "
             f"normalized_best='{fallback['normalized_best']}', confidence={fallback['confidence_form']}, "
-            f"context_years={fallback['context_years']}"
+            f"context_years={fallback['context_years']}, posthumous_context={fallback['posthumous_context']}"
         )
         return fallback
 
@@ -3065,17 +3479,9 @@ def format_candidate_for_prompt(candidate, entity_analysis=None):
     wikipedia_lead = normalize_whitespace(candidate.get("wikipedia_lead", ""))
     wikipedia_title = normalize_whitespace(candidate.get("wikipedia_title", ""))
     matched_queries = candidate.get("matched_queries", [])
-    birth_year = candidate.get("birth_year")
-    death_year = candidate.get("death_year")
     temporal_assessment = assess_candidate_temporal_fit(candidate, entity_analysis)
     use_temporal_matching = should_use_temporal_matching(entity_analysis)
-    life_span_text = []
-    if birth_year is not None:
-        life_span_text.append(f"ur. {birth_year}")
-    if death_year is not None:
-        life_span_text.append(f"zm. {death_year}")
-    if not life_span_text:
-        life_span_text = ["brak danych"]
+    life_span_text = format_candidate_life_span(candidate)
 
     lines = [
         f"Źródło: {candidate['source']}",
@@ -3181,6 +3587,7 @@ def choose_candidate_with_gemini(name, context, tag_type, entity_analysis, candi
         type_specific_rules = (
             "2. Dla persName wybieraj wyłącznie człowieka, zgodnego z kontekstem.\n"
             "3. Dla persName uwzględnij zgodność chronologiczną: kandydat żyjący wyraźnie przed lub po latach z kontekstu powinien być odrzucany.\n"
+            "3a. Jeśli kontekst wyraźnie wskazuje wzmiankę pośmiertną (np. bone memorie, felicis recordacionis, sprawa majątku po zmarłym), data dokumentu może być nieco późniejsza od daty śmierci kandydata.\n"
         )
     else:
         extra_clues_block = (
