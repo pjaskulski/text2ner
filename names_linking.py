@@ -53,6 +53,7 @@ WIKIBASE_SOURCES = {
         "instance_of_property": "P1",
         "person_type_ids": {"Q64"},
         "place_type_ids": {"Q68", "Q2342", "Q81"},
+        "priority_claim_property_ids": ("P25", "P63", "P37"),
     },
     "Wikidata": {
         "source": "Wikidata",
@@ -61,6 +62,7 @@ WIKIBASE_SOURCES = {
         "instance_of_property": "P31",
         "person_type_ids": {"Q5"},
         "place_type_ids": {"Q515", "Q532", "Q486972", "Q6256", "Q82794", "Q1620908"},
+        "priority_claim_property_ids": ("P39", "P106"),
     },
 }
 
@@ -1905,10 +1907,23 @@ def extract_entity_id_values(claims, property_id):
     return list(dict.fromkeys(values))
 
 
-def collect_claim_reference_ids(entity):
+def collect_claim_reference_ids(entity, priority_property_ids=None):
     """Zbiera ID encji referencyjnych potrzebnych do opisu claimów."""
+    priority_property_ids = tuple(priority_property_ids or ())
     value_ids = []
-    for statements in entity.get("claims", {}).values():
+    claims = entity.get("claims", {})
+
+    for property_id in priority_property_ids:
+        for statement in claims.get(property_id, []):
+            mainsnak = statement.get("mainsnak", {})
+            datavalue = mainsnak.get("datavalue")
+            if not datavalue or datavalue.get("type") != "wikibase-entityid":
+                continue
+            entity_id = datavalue.get("value", {}).get("id")
+            if entity_id:
+                value_ids.append(entity_id)
+
+    for statements in claims.values():
         for statement in statements[:2]:
             mainsnak = statement.get("mainsnak", {})
             datavalue = mainsnak.get("datavalue")
@@ -1969,6 +1984,30 @@ def build_claim_facts(entity, property_entities, referenced_entities, limit=10):
             facts.append(fact)
             if len(facts) >= limit:
                 return facts
+    return facts
+
+
+def build_priority_claim_facts(entity, property_entities, referenced_entities, priority_property_ids):
+    """Buduje pełniejszą listę najważniejszych faktów, np. urzędów i funkcji z Wikidaty."""
+    facts = []
+    seen = set()
+    claims = entity.get("claims", {})
+
+    for property_id in priority_property_ids or ():
+        property_label_map = build_multilang_map(property_entities.get(property_id, {}).get("labels", {}))
+        property_label = get_best_lang_value(property_label_map, property_id)
+        for statement in claims.get(property_id, []):
+            mainsnak = statement.get("mainsnak", {})
+            value = format_claim_value(mainsnak.get("datavalue"), referenced_entities)
+            if not value:
+                continue
+            fact = f"{property_label}: {value}"
+            folded = fact.casefold()
+            if folded in seen:
+                continue
+            seen.add(folded)
+            facts.append(fact)
+
     return facts
 
 
@@ -2099,6 +2138,12 @@ def build_candidate_from_entity(source_config, entity_id, entity, property_entit
         "aliases": aliases_map,
         "instance_of_ids": instance_of_ids,
         "instance_of_texts": _normalize_string_list(instance_of_texts, min_length=2),
+        "priority_claim_facts": build_priority_claim_facts(
+            entity,
+            property_entities,
+            referenced_entities,
+            source_config.get("priority_claim_property_ids", ()),
+        ),
         "claim_facts": build_claim_facts(entity, property_entities, referenced_entities),
         "birth_year": None,
         "death_year": None,
@@ -2119,14 +2164,18 @@ def build_candidate_from_entity(source_config, entity_id, entity, property_entit
 def build_candidates_from_entity_ids(source_config, entity_ids):
     """Pobiera encje i zamienia ich identyfikatory na kandydatów do wyboru."""
     entities_map = fetch_entities_map(source_config, entity_ids)
+    priority_property_ids = tuple(source_config.get("priority_claim_property_ids", ()))
     property_ids = []
     referenced_ids = []
 
     for entity_id in entity_ids:
         entity = entities_map.get(entity_id, {})
+        property_ids.extend(priority_property_ids)
         property_ids.extend(entity.get("claims", {}).keys())
-        referenced_ids.extend(collect_claim_reference_ids(entity))
+        referenced_ids.extend(collect_claim_reference_ids(entity, priority_property_ids))
 
+    property_ids = list(dict.fromkeys(property_ids))
+    referenced_ids = list(dict.fromkeys(referenced_ids))
     property_entities = fetch_entities_map(source_config, property_ids[:60])
     referenced_entities = fetch_entities_map(source_config, referenced_ids[:80])
 
@@ -2613,6 +2662,7 @@ def build_candidate_text_corpus(candidate):
     for aliases in candidate.get("aliases", {}).values():
         values.extend(aliases)
     values.extend(candidate.get("instance_of_texts", []))
+    values.extend(candidate.get("priority_claim_facts", []))
     values.extend(candidate.get("claim_facts", []))
     return [normalize_for_lookup(value) for value in values if normalize_for_lookup(value)]
 
@@ -3233,6 +3283,8 @@ def format_candidate_life_span(candidate):
 def format_candidate_temporal_log_line(candidate, entity_analysis):
     """Buduje jednowierszowy wpis diagnostyczny o dopasowaniu chronologicznym."""
     temporal = assess_candidate_temporal_fit(candidate, entity_analysis)
+    priority_facts = candidate.get("priority_claim_facts", [])
+    priority_facts_text = f" key_facts={priority_facts}" if priority_facts else ""
     return (
         f"{candidate.get('name', '?')} "
         f"[{candidate.get('source', '?')}:{candidate.get('id', '?')}] "
@@ -3240,21 +3292,23 @@ def format_candidate_temporal_log_line(candidate, entity_analysis):
         f"temporal={temporal['status']} "
         f"reason={temporal['reason']} "
         f"queries={candidate.get('matched_queries', [])}"
+        f"{priority_facts_text}"
     )
 
 
 def format_candidate_temporal_log_block(candidate, entity_analysis, position):
     """Buduje wielowierszowy, czytelniejszy opis dopasowania chronologicznego kandydata."""
     temporal = assess_candidate_temporal_fit(candidate, entity_analysis)
-    return "\n".join(
-        [
-            f"{position}. {candidate.get('name', '?')} [{candidate.get('source', '?')}:{candidate.get('id', '?')}]",
-            f"   life: {format_candidate_life_span(candidate)}",
-            f"   temporal: {temporal['status']}",
-            f"   reason: {temporal['reason']}",
-            f"   queries: {candidate.get('matched_queries', [])}",
-        ]
-    )
+    lines = [
+        f"{position}. {candidate.get('name', '?')} [{candidate.get('source', '?')}:{candidate.get('id', '?')}]",
+        f"   life: {format_candidate_life_span(candidate)}",
+        f"   temporal: {temporal['status']}",
+        f"   reason: {temporal['reason']}",
+        f"   queries: {candidate.get('matched_queries', [])}",
+    ]
+    if candidate.get("priority_claim_facts"):
+        lines.append(f"   key_facts: {candidate.get('priority_claim_facts', [])}")
+    return "\n".join(lines)
 
 
 def diagnostic_log_temporal_candidates(entity_analysis, tag_type, candidates, scope_label):
@@ -3323,14 +3377,49 @@ def order_candidates_for_review(candidates, entity_analysis):
     return sorted(
         candidates,
         key=lambda candidate: (
-            source_priority.get(candidate.get("source"), 9),
-            -candidate_name_quality(candidate, entity_analysis),
             -candidate_temporal_rank(candidate, entity_analysis),
             -candidate_query_specificity(candidate, entity_analysis),
+            -candidate_name_quality(candidate, entity_analysis),
+            source_priority.get(candidate.get("source"), 9),
             -len(candidate.get("matched_queries", [])),
             candidate.get("name", ""),
         )
     )
+
+
+def limit_candidates_for_review(candidates, max_count=12, min_per_source=2):
+    """Ogranicza listę kandydatów, nie pozwalając jednemu źródłu całkiem wyprzeć pozostałych."""
+    if len(candidates) <= max_count:
+        return candidates
+
+    selected = []
+    selected_keys = set()
+    sources = list(dict.fromkeys(candidate.get("source") for candidate in candidates))
+
+    for source in sources:
+        source_candidates = [
+            candidate for candidate in candidates
+            if candidate.get("source") == source
+        ]
+        for candidate in source_candidates[:min_per_source]:
+            key = candidate.get("url") or f"{candidate.get('source')}:{candidate.get('id')}"
+            if key in selected_keys:
+                continue
+            selected.append(candidate)
+            selected_keys.add(key)
+            if len(selected) >= max_count:
+                return selected
+
+    for candidate in candidates:
+        key = candidate.get("url") or f"{candidate.get('source')}:{candidate.get('id')}"
+        if key in selected_keys:
+            continue
+        selected.append(candidate)
+        selected_keys.add(key)
+        if len(selected) >= max_count:
+            break
+
+    return selected
 
 
 def search_source_candidates(query, tag_type, source_config):
@@ -3379,7 +3468,7 @@ def collect_candidates(entity_analysis, context, tag_type):
             f"{local_candidate_labels}"
         )
         diagnostic_log_temporal_candidates(entity_analysis, tag_type, local_candidates, "źródła specjalistyczne")
-        return local_candidates[:12]
+        return limit_candidates_for_review(local_candidates)
 
     diagnostic_log(
         f"Brak kandydatów ze źródeł specjalistycznych dla '{entity_analysis['surface']}' ({tag_type}); "
@@ -3399,7 +3488,7 @@ def collect_candidates(entity_analysis, context, tag_type):
         f"{wikidata_candidate_labels}"
     )
     diagnostic_log_temporal_candidates(entity_analysis, tag_type, wikidata_candidates, "wikidata")
-    return wikidata_candidates[:12]
+    return limit_candidates_for_review(wikidata_candidates)
 
 
 def collect_wikidata_only_candidates(entity_analysis, tag_type):
@@ -3417,7 +3506,7 @@ def collect_wikidata_only_candidates(entity_analysis, tag_type):
         f"{wikidata_retry_labels}"
     )
     diagnostic_log_temporal_candidates(entity_analysis, tag_type, wikidata_candidates, "wikidata_retry")
-    return wikidata_candidates[:12]
+    return limit_candidates_for_review(wikidata_candidates)
 
 
 # --------------------------- GEMINI IDENTIFICATION ----------------------------
@@ -3535,6 +3624,7 @@ def format_candidate_for_prompt(candidate, entity_analysis=None):
         aliases.extend(candidate.get("aliases", {}).get(lang, []))
     aliases = _normalize_string_list(aliases, min_length=2)[:12]
     instance_of_texts = candidate.get("instance_of_texts", [])[:8]
+    priority_claim_facts = candidate.get("priority_claim_facts", [])
     claim_facts = candidate.get("claim_facts", [])[:10]
     descriptions = extract_multilang_values(candidate.get("descriptions", {}))
     wikipedia_lead = normalize_whitespace(candidate.get("wikipedia_lead", ""))
@@ -3553,6 +3643,7 @@ def format_candidate_for_prompt(candidate, entity_analysis=None):
         f"Opisy: {descriptions or ['brak']}",
         f"Aliasy: {aliases or ['brak']}",
         f"Instance of: {instance_of_texts or ['brak']}",
+        f"Najważniejsze urzędy/funkcje z właściwości: {priority_claim_facts or ['brak']}",
     ]
     if use_temporal_matching:
         lines.append(f"Lata życia: {life_span_text}")
