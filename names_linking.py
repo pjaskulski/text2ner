@@ -269,6 +269,9 @@ DEFAULT_POLISH_PERSON_EQUIVALENTS = {
     "fridericus": "Fryderyk",
     "henricus": "Henryk",
     "ioannes": "Jan",
+    "iohannes": "Jan",
+    "iohannis": "Jan",
+    "ioannis": "Jan",
     "jacobus": "Jakub",
     "johannes": "Jan",
     "ladislaus": "Władysław",
@@ -278,6 +281,14 @@ DEFAULT_POLISH_PERSON_EQUIVALENTS = {
     "stanislaus": "Stanisław",
     "vladislaus": "Władysław",
     "wenceslaus": "Wacław",
+}
+
+PERSON_SEARCH_VARIANTS = {
+    "ioannes": ["Johannes", "Johann", "Jan"],
+    "iohannes": ["Johannes", "Johann", "Jan"],
+    "ioannis": ["Johannes", "Johann", "Jan"],
+    "iohannis": ["Johannes", "Johann", "Jan"],
+    "johannes": ["Johannes", "Johann", "Jan"],
 }
 
 DEFAULT_POLISH_PLACE_EQUIVALENTS = {
@@ -290,6 +301,10 @@ DEFAULT_POLISH_PLACE_EQUIVALENTS = {
     "gedanensis": "Gdańsk",
     "lucca": "Lukka",
     "luca": "Lukka",
+    "missen": "Miśnia",
+    "missini": "Miśnia",
+    "misnia": "Miśnia",
+    "misnensis": "Miśnia",
     "polonia": "Polska",
     "posnania": "Poznań",
     "posnaniensis": "Poznań",
@@ -299,6 +314,14 @@ DEFAULT_POLISH_PLACE_EQUIVALENTS = {
     "vesprimiensis": "Veszprém",
     "thorun": "Toruń",
     "torunia": "Toruń",
+}
+
+PLACE_SEARCH_VARIANTS = {
+    "missen": ["Meißen", "Meissen", "Miśnia"],
+    "missini": ["Meißen", "Meissen", "Miśnia"],
+    "misnia": ["Meißen", "Meissen", "Miśnia"],
+    "misnensis": ["Meißen", "Meissen", "Miśnia"],
+    "vesprimiensis": ["Veszprém", "Veszprem"],
 }
 
 DEFAULT_POLISH_PLACE_ADJECTIVAL_EQUIVALENTS = {
@@ -314,6 +337,10 @@ DEFAULT_POLISH_PLACE_ADJECTIVAL_EQUIVALENTS = {
     "gnesnensem": "gnieźnieński",
     "lucca": "lukeński",
     "luca": "lukeński",
+    "missen": "miśnieński",
+    "missini": "miśnieński",
+    "misnia": "miśnieński",
+    "misnensis": "miśnieński",
     "pomerania": "pomorski",
     "pomeranie": "pomorski",
     "posnania": "poznański",
@@ -924,7 +951,7 @@ def _normalize_string_list(values, *, min_length=2):
         value = normalize_whitespace(value)
         if len(value) < min_length:
             continue
-        folded = value.casefold()
+        folded = value.lower()
         if folded in seen:
             continue
         seen.add(folded)
@@ -950,6 +977,14 @@ def augment_with_polish_equivalents(tag_type, values):
     seen = {normalize_whitespace(value).casefold() for value in augmented if normalize_whitespace(value)}
 
     for value in list(augmented):
+        if tag_type == "persName":
+            for variant in PERSON_SEARCH_VARIANTS.get(normalize_for_lookup(value), []):
+                folded = variant.casefold()
+                if folded in seen:
+                    continue
+                seen.add(folded)
+                augmented.append(variant)
+
         polish_equivalent = get_polish_equivalent(value, tag_type)
         if not polish_equivalent:
             continue
@@ -2297,8 +2332,8 @@ def expand_office_terms(office_terms):
     seen = set()
     replacements = {
         "cardinalis": ["kardynał", "kardynal", "cardinal"],
-        "episcopus": ["biskup", "bishop"],
-        "archiepiscopus": ["arcybiskup", "archbishop"],
+        "episcopus": ["biskup", "bishop", "Bischof"],
+        "archiepiscopus": ["arcybiskup", "archbishop", "Erzbischof"],
         "rex": ["król", "krol", "king"],
         "regina": ["królowa", "krolowa", "queen"],
         "dux": ["książę", "ksiaze", "duke"],
@@ -2343,15 +2378,20 @@ def expand_place_terms(place_terms):
         expanded_variants = []
         for variant in variants:
             expanded_variants.append(variant)
+            normalized_variant = normalize_for_lookup(variant)
+            expanded_variants.extend(PLACE_SEARCH_VARIANTS.get(normalized_variant, []))
             polish_equivalent = get_polish_equivalent(variant, "placeName")
             if polish_equivalent:
                 expanded_variants.append(polish_equivalent)
+                expanded_variants.extend(
+                    PLACE_SEARCH_VARIANTS.get(normalize_for_lookup(polish_equivalent), [])
+                )
             adjectival_equivalent = get_polish_place_adjectival_equivalent(variant)
             if adjectival_equivalent:
                 expanded_variants.append(adjectival_equivalent)
 
         for variant in expanded_variants:
-            folded = variant.casefold()
+            folded = variant.lower()
             if folded in seen:
                 continue
             seen.add(folded)
@@ -3082,11 +3122,31 @@ def build_query_plan(entity_analysis):
         value = normalize_whitespace(value)
         if len(value) < 2:
             return
-        folded = value.casefold()
+        folded = value.lower()
         if folded in seen:
             return
         seen.add(folded)
         queries.append(value)
+
+    def order_person_base_names(values):
+        ordered = []
+        ordered_seen = set()
+
+        def add_base_name(value):
+            value = normalize_whitespace(value)
+            if len(value) < 2:
+                return
+            folded = value.casefold()
+            if folded in ordered_seen:
+                return
+            ordered_seen.add(folded)
+            ordered.append(value)
+
+        for value in values or []:
+            add_base_name(value)
+            for variant in PERSON_SEARCH_VARIANTS.get(normalize_for_lookup(value), []):
+                add_base_name(variant)
+        return ordered
 
     add_query(entity_analysis.get("surface"))
     add_query(entity_analysis.get("normalized_best"))
@@ -3098,16 +3158,22 @@ def build_query_plan(entity_analysis):
         add_query(value)
 
     if entity_analysis.get("tag_type") == "persName":
-        base_names = entity_analysis.get("lemma_candidates", [])[:2] or [entity_analysis.get("normalized_best")]
+        base_names = order_person_base_names(
+            entity_analysis.get("lemma_candidates", [])[:4] or [entity_analysis.get("normalized_best")]
+        )[:4]
         office_terms = expand_office_terms(entity_analysis.get("office_terms", []))[:4]
-        place_terms = expand_place_terms(entity_analysis.get("place_terms", []))[:4]
+        place_terms = expand_place_terms(entity_analysis.get("place_terms", []))[:5]
         for base_name in base_names:
-            for office_term in office_terms[:2]:
+            for office_term in office_terms[:3]:
                 add_query(f"{base_name} {office_term}")
-            for place_term in place_terms[:2]:
+            for place_term in place_terms[:3]:
                 add_query(f"{base_name} {place_term}")
             if office_terms and place_terms:
                 add_query(f"{base_name} {office_terms[0]} {place_terms[0]}")
+            german_office_terms = [term for term in office_terms if term[:1].isupper()]
+            if german_office_terms and len(place_terms) > 1:
+                for place_term in place_terms[1:3]:
+                    add_query(f"{base_name} {german_office_terms[0]} {place_term}")
 
     if entity_analysis.get("tag_type") == "placeName":
         base_names = entity_analysis.get("lemma_candidates", [])[:2] or [entity_analysis.get("normalized_best")]
@@ -3116,7 +3182,7 @@ def build_query_plan(entity_analysis):
             for place_term in place_terms[:2]:
                 add_query(f"{base_name} {place_term}")
 
-    return queries[:12]
+    return queries[:24]
 
 
 def candidate_name_quality(candidate, entity_analysis):
@@ -3420,6 +3486,61 @@ def limit_candidates_for_review(candidates, max_count=12, min_per_source=2):
             break
 
     return selected
+
+
+def format_candidate_suggestion(candidate, entity_analysis):
+    """Tworzy zwięzły opis kandydata do ręcznego wyboru w interfejsie."""
+    temporal = assess_candidate_temporal_fit(candidate, entity_analysis)
+    descriptions = extract_multilang_values(candidate.get("descriptions", {}))
+    labels = extract_multilang_values(candidate.get("labels", {}))
+    key_facts = candidate.get("priority_claim_facts", [])
+    claim_facts = candidate.get("claim_facts", [])[:5]
+
+    return {
+        "id": candidate.get("id", ""),
+        "source": candidate.get("source", ""),
+        "url": candidate.get("url", ""),
+        "name": candidate.get("name", ""),
+        "labels": labels[:6],
+        "description": descriptions[0] if descriptions else candidate.get("desc", ""),
+        "life": format_candidate_life_span(candidate),
+        "temporal_status": temporal["status"],
+        "temporal_reason": temporal["reason"],
+        "matched_queries": candidate.get("matched_queries", []),
+        "key_facts": key_facts[:8],
+        "claim_facts": claim_facts,
+    }
+
+
+def candidate_is_plausible_manual_suggestion(candidate, entity_analysis):
+    """Odrzuca z listy ręcznej kandydatów wyraźnie niepasujących do kontekstu."""
+    if not should_use_temporal_matching(entity_analysis):
+        return True
+
+    temporal = assess_candidate_temporal_fit(candidate, entity_analysis)
+    if temporal["status"] == "conflict":
+        return False
+    return True
+
+
+def build_candidate_suggestions(candidates, entity_analysis, max_count=5):
+    """Wybiera kandydatów, których warto pokazać historykowi do ręcznego rozstrzygnięcia."""
+    ordered = order_candidates_for_review(dedupe_candidates(candidates), entity_analysis)
+    plausible = [
+        candidate for candidate in ordered
+        if candidate_is_plausible_manual_suggestion(candidate, entity_analysis)
+    ]
+    if len(plausible) < len(ordered):
+        diagnostic_log(
+            f"Propozycje ręczne dla '{entity_analysis.get('surface', '')}' "
+            f"({entity_analysis.get('tag_type', '')}): odrzucono "
+            f"{len(ordered) - len(plausible)} kandydatów z konfliktem chronologicznym."
+        )
+    limited = limit_candidates_for_review(plausible, max_count=max_count, min_per_source=1)
+    return [
+        format_candidate_suggestion(candidate, entity_analysis)
+        for candidate in limited
+    ]
 
 
 def search_source_candidates(query, tag_type, source_config):
@@ -3881,6 +4002,10 @@ def build_link_decision(name, context, tag_type, entity_analysis, candidates):
             "reason": "gemini_selected",
             "selection_reason": selection.get("reason", ""),
             "matched_signals": selection.get("matched_signals", []),
+            "selected_candidate": (
+                format_candidate_suggestion(selected_candidate, entity_analysis)
+                if selected_candidate is not None else None
+            ),
         }
     return {
         "status": "none",
@@ -3897,6 +4022,7 @@ def link_entity(name, context, tag_type, document_years=None):
     normalized_name = entity_analysis["normalized_best"]
     queries = build_query_plan(entity_analysis)
     candidates = collect_candidates(entity_analysis, context, tag_type)
+    suggestion_candidates = list(candidates)
     decision = build_link_decision(name, context, tag_type, entity_analysis, candidates)
 
     used_wikidata = any(candidate.get("source") == "Wikidata" for candidate in candidates)
@@ -3913,6 +4039,7 @@ def link_entity(name, context, tag_type, document_years=None):
             f"ponawiam identyfikację tylko na kandydatach z Wikidaty."
         )
         candidates = collect_wikidata_only_candidates(entity_analysis, tag_type)
+        suggestion_candidates.extend(candidates)
         decision = build_link_decision(name, context, tag_type, entity_analysis, candidates)
 
     if ENABLE_WIKIDATA_SEMANTIC_FALLBACK:
@@ -3930,6 +4057,7 @@ def link_entity(name, context, tag_type, document_years=None):
             semantic_candidates = collect_wikidata_semantic_fallback_candidates(entity_analysis)
             if semantic_candidates:
                 candidates = semantic_candidates
+                suggestion_candidates.extend(candidates)
                 decision = build_link_decision(name, context, tag_type, entity_analysis, candidates)
             else:
                 diagnostic_log(
@@ -3958,6 +4086,7 @@ def link_entity(name, context, tag_type, document_years=None):
         plwiki_candidates = collect_plwiki_person_fallback_candidates(entity_analysis)
         if plwiki_candidates:
             candidates = plwiki_candidates
+            suggestion_candidates.extend(candidates)
             decision = build_link_decision(name, context, tag_type, entity_analysis, candidates)
         else:
             diagnostic_log(
@@ -3974,6 +4103,7 @@ def link_entity(name, context, tag_type, document_years=None):
         "normalized_name": normalized_name,
         "query_plan": queries,
         "candidates": candidates,
+        "candidate_suggestions": build_candidate_suggestions(suggestion_candidates, entity_analysis),
         "decision": decision,
     }
 

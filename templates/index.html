@@ -246,7 +246,39 @@
                     <h3 id="logSnippetTitle" class="text-xl font-bold text-gray-900">Fragment logu</h3>
                     <p class="text-sm text-gray-500 mt-1">Zapis kroków diagnostycznych dotyczących wybranej encji.</p>
                 </div>
-                <button onclick="toggleLogSnippetModal(false)" class="text-gray-400 hover:text-gray-600">
+                <div class="flex items-center gap-3">
+                    <span id="logSnippetCopyStatus" class="text-xs text-green-700"></span>
+                    <button type="button" onclick="copyLogSnippetToClipboard()"
+                        class="px-3 py-1.5 rounded-md bg-blue-50 text-blue-700 hover:bg-blue-100 text-sm font-semibold">
+                        Kopiuj log
+                    </button>
+                    <button onclick="toggleLogSnippetModal(false)" class="text-gray-400 hover:text-gray-600">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
+                            stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            <div class="p-6 bg-gray-50">
+                <pre id="logSnippetContent"
+                    class="border border-gray-200 rounded-lg bg-white p-4 overflow-x-auto overflow-y-auto max-h-[60vh] text-sm text-gray-700 whitespace-pre-wrap"></pre>
+            </div>
+        </div>
+    </div>
+
+    <div id="candidateSelectionModal"
+        class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+        <div class="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden">
+            <div class="p-6 border-b flex justify-between items-start gap-4">
+                <div>
+                    <h3 id="candidateSelectionTitle" class="text-xl font-bold text-gray-900">Wybierz kandydata</h3>
+                    <p class="text-sm text-gray-500 mt-1">
+                        Możesz ręcznie przypisać identyfikator referencyjny albo pozostawić encję bez identyfikacji.
+                    </p>
+                </div>
+                <button onclick="toggleCandidateSelectionModal(false)" class="text-gray-400 hover:text-gray-600">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
                         stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -254,9 +286,51 @@
                     </svg>
                 </button>
             </div>
-            <div class="p-6 bg-gray-50">
-                <pre id="logSnippetContent"
-                    class="border border-gray-200 rounded-lg bg-white p-4 overflow-x-auto overflow-y-auto max-h-[60vh] text-sm text-gray-700 whitespace-pre-wrap"></pre>
+            <div class="p-6 bg-gray-50 overflow-y-auto max-h-[65vh]">
+                <div id="candidateSelectionList" class="space-y-3"></div>
+            </div>
+            <div class="p-4 border-t bg-white flex justify-end gap-3">
+                <button type="button" onclick="toggleCandidateSelectionModal(false)"
+                    class="px-4 py-2 rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 font-medium">
+                    Zamknij
+                </button>
+                <button type="button" onclick="applyManualCandidateSelection()"
+                    class="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 font-semibold">
+                    Wybierz
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="entityFactsModal"
+        class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+        <div class="bg-white rounded-xl shadow-2xl max-w-5xl w-full max-h-[90vh] overflow-hidden">
+            <div class="p-6 border-b flex justify-between items-start gap-4">
+                <div>
+                    <h3 id="entityFactsTitle" class="text-xl font-bold text-gray-900">Fakty identyfikacji</h3>
+                    <p class="text-sm text-gray-500 mt-1">
+                        Zestawienie najważniejszych danych z dokumentu i z wybranej encji referencyjnej.
+                    </p>
+                </div>
+                <button onclick="toggleEntityFactsModal(false)" class="text-gray-400 hover:text-gray-600">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
+                        stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+            <div class="p-6 bg-gray-50 overflow-y-auto max-h-[70vh]">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <section class="bg-white border border-gray-200 rounded-xl p-4">
+                        <h4 class="text-sm font-bold uppercase tracking-wide text-gray-500 mb-3">Dane z dokumentu</h4>
+                        <div id="entityFactsDocumentPanel" class="space-y-3 text-sm text-gray-700"></div>
+                    </section>
+                    <section class="bg-white border border-gray-200 rounded-xl p-4">
+                        <h4 class="text-sm font-bold uppercase tracking-wide text-gray-500 mb-3">Dane z encji referencyjnej</h4>
+                        <div id="entityFactsCandidatePanel" class="space-y-3 text-sm text-gray-700"></div>
+                    </section>
+                </div>
             </div>
         </div>
     </div>
@@ -500,6 +574,8 @@
         let enabledRecognitionTagTypes = [...DEFAULT_ENABLED_RECOGNITION_TAG_TYPES];
         let selectedGeminiModel = DEFAULT_GEMINI_MODEL;
         let currentDiagnosticLogFile = null;
+        let currentIdentificationData = { entities: [], unresolved_entities: [] };
+        let activeCandidateSelectionEntity = null;
         let dictionaryDefinitions = [];
         let editableDictionaryData = {};
         let activeDictionaryKey = null;
@@ -599,7 +675,7 @@
         }
 
         function refreshBodyOverflow() {
-            const modalIds = ['helpModal', 'settingsModal', 'logSnippetModal', 'dictionaryModal'];
+            const modalIds = ['helpModal', 'settingsModal', 'logSnippetModal', 'dictionaryModal', 'candidateSelectionModal', 'entityFactsModal'];
             const hasVisibleModal = modalIds.some(modalId => {
                 const modal = document.getElementById(modalId);
                 return modal && !modal.classList.contains('hidden');
@@ -1011,6 +1087,10 @@
         }
 
         function renderIdentificationLists(data) {
+            currentIdentificationData = {
+                entities: data.entities || [],
+                unresolved_entities: data.unresolved_entities || [],
+            };
             const list = document.getElementById('entityList');
             const unresolvedEntities = data.unresolved_entities || [];
             const unresolvedSummary = document.getElementById('unresolvedEntitySummary');
@@ -1033,34 +1113,67 @@
                 return;
             }
 
-            list.innerHTML = (data.entities || []).map(e => `
+            list.innerHTML = (data.entities || []).map((e, index) => {
+                return `
                 <div class="p-3 bg-gray-50 border rounded-lg">
-                    <span class="text-xs font-bold uppercase ${e.type === 'persName' ? 'text-purple-600' : 'text-orange-600'}">${e.type}</span>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <span class="text-xs font-bold uppercase ${e.type === 'persName' ? 'text-purple-600' : 'text-orange-600'}">${e.type}</span>
+                        ${e.manual ? `
+                            <span class="text-xs font-semibold uppercase tracking-wide text-blue-700 bg-blue-50 border border-blue-200 rounded-full px-2 py-0.5">
+                                wybór manualny
+                            </span>
+                        ` : ''}
+                    </div>
                     <p class="font-medium">${e.surface && e.surface !== e.name ? `${e.surface} (${e.name})` : e.name}</p>
                     <a href="${e.url}" target="_blank" class="text-sm text-blue-500 hover:underline break-all">${e.url}</a>
                     <button type="button"
                         class="mt-3 text-sm bg-slate-100 text-slate-700 px-3 py-1.5 rounded-md hover:bg-slate-200 transition font-medium"
-                        onclick="showEntityLogSnippet(decodeURIComponent('${encodeURIComponent(JSON.stringify({ surface: e.surface || e.name, name: e.name, type: e.type }))}'))">
+                        onclick="showEntityLogFromList('entities', ${index})">
                         Pokaż log encji
                     </button>
+                    ${e.facts ? `
+                        <button type="button"
+                            class="mt-3 ml-2 text-sm bg-emerald-50 text-emerald-700 px-3 py-1.5 rounded-md hover:bg-emerald-100 transition font-medium"
+                            onclick="showEntityFactsByIndex(${index})">
+                            Fakty
+                        </button>
+                    ` : ''}
+                    ${e.manual ? `
+                        <button type="button"
+                            class="mt-3 ml-2 text-sm bg-red-50 text-red-700 px-3 py-1.5 rounded-md hover:bg-red-100 transition font-medium"
+                            onclick="revertManualIdentificationByIndex(${index})">
+                            Cofnij wybór
+                        </button>
+                    ` : ''}
                 </div>
-            `).join('');
+            `;
+            }).join('');
 
             if (unresolvedEntities.length > 0) {
                 unresolvedSummary.classList.remove('hidden');
                 unresolvedSummary.textContent = `Łącznie niezidentyfikowanych tagów: ${unresolvedEntities.length}`;
-                unresolvedList.innerHTML = unresolvedEntities.map(e => `
+                unresolvedList.innerHTML = unresolvedEntities.map((e, index) => {
+                    const suggestionCount = (e.candidate_suggestions || []).length;
+                    return `
                     <div class="p-3 bg-amber-50 border border-amber-200 rounded-lg">
                         <span class="text-xs font-bold uppercase ${e.type === 'persName' ? 'text-purple-600' : 'text-orange-600'}">${e.type}</span>
                         <p class="font-medium text-gray-900">${e.surface && e.surface !== e.name ? `${e.surface} (${e.name})` : e.name}</p>
                         <p class="text-sm text-gray-500">Nie przypisano identyfikatora referencyjnego.</p>
                         <button type="button"
                             class="mt-3 text-sm bg-white text-amber-800 px-3 py-1.5 rounded-md hover:bg-amber-100 transition font-medium"
-                            onclick="showEntityLogSnippet(decodeURIComponent('${encodeURIComponent(JSON.stringify({ surface: e.surface || e.name, name: e.name, type: e.type }))}'))">
+                            onclick="showEntityLogFromList('unresolved_entities', ${index})">
                             Pokaż log encji
                         </button>
+                        ${suggestionCount ? `
+                            <button type="button"
+                                class="mt-3 ml-2 text-sm bg-blue-50 text-blue-700 px-3 py-1.5 rounded-md hover:bg-blue-100 transition font-medium"
+                                onclick="showCandidateSelectionByIndex(${index})">
+                                Wybierz kandydata (${suggestionCount})
+                            </button>
+                        ` : ''}
                     </div>
-                `).join('');
+                `;
+                }).join('');
             } else {
                 unresolvedSummary.classList.add('hidden');
                 unresolvedSummary.textContent = '';
@@ -1080,6 +1193,7 @@
             const modal = document.getElementById('logSnippetModal');
             document.getElementById('logSnippetTitle').textContent = title;
             document.getElementById('logSnippetContent').textContent = content;
+            document.getElementById('logSnippetCopyStatus').textContent = '';
             if (show) {
                 modal.classList.remove('hidden');
                 refreshBodyOverflow();
@@ -1089,13 +1203,52 @@
             refreshBodyOverflow();
         }
 
+        async function copyLogSnippetToClipboard() {
+            const content = document.getElementById('logSnippetContent').textContent;
+            const status = document.getElementById('logSnippetCopyStatus');
+            if (!content.trim()) {
+                status.textContent = 'Brak tekstu';
+                return;
+            }
+
+            try {
+                await navigator.clipboard.writeText(content);
+                status.textContent = 'Skopiowano';
+                setTimeout(() => {
+                    status.textContent = '';
+                }, 2000);
+            } catch (err) {
+                status.textContent = 'Nie udało się skopiować';
+            }
+        }
+
+        function getEntityFromList(listName, index) {
+            const list = currentIdentificationData[listName] || [];
+            return list[Number(index)] || null;
+        }
+
+        function showEntityLogFromList(listName, index) {
+            const entity = getEntityFromList(listName, index);
+            if (!entity) {
+                alert('Nie udało się odnaleźć danych encji.');
+                return;
+            }
+            showEntityLogSnippet({
+                surface: entity.surface || entity.name,
+                name: entity.name,
+                type: entity.type,
+            });
+        }
+
         async function showEntityLogSnippet(entityPayload) {
             if (!currentDiagnosticLogFile) {
                 alert('Brak dostępnego pliku logu dla bieżącej analizy.');
                 return;
             }
 
-            const entity = JSON.parse(entityPayload);
+            const entity = typeof entityPayload === 'string'
+                ? JSON.parse(entityPayload)
+                : entityPayload;
             try {
                 const response = await fetch("{{ url_for('get_entity_diagnostic_log_snippet') }}", {
                     method: 'POST',
@@ -1115,6 +1268,319 @@
             } catch (err) {
                 alert(err.message || 'Nie udało się pobrać fragmentu logu.');
             }
+        }
+
+        function toggleEntityFactsModal(show) {
+            const modal = document.getElementById('entityFactsModal');
+            if (show) {
+                modal.classList.remove('hidden');
+                refreshBodyOverflow();
+                return;
+            }
+            modal.classList.add('hidden');
+            refreshBodyOverflow();
+        }
+
+        function renderFactsValue(label, value) {
+            const displayValue = Array.isArray(value)
+                ? (value.length ? value.join(', ') : 'brak')
+                : (value || 'brak');
+            return `
+                <div>
+                    <div class="text-xs font-semibold uppercase tracking-wide text-gray-400">${escapeHtml(label)}</div>
+                    <div class="mt-1 text-gray-800">${escapeHtml(String(displayValue))}</div>
+                </div>
+            `;
+        }
+
+        function renderFactsList(label, values) {
+            const items = Array.isArray(values) ? values.filter(Boolean) : [];
+            if (!items.length) {
+                return renderFactsValue(label, 'brak');
+            }
+            return `
+                <div>
+                    <div class="text-xs font-semibold uppercase tracking-wide text-gray-400">${escapeHtml(label)}</div>
+                    <ul class="mt-2 list-disc list-inside space-y-1 text-gray-800">
+                        ${items.map(item => `<li>${escapeHtml(String(item))}</li>`).join('')}
+                    </ul>
+                </div>
+            `;
+        }
+
+        function showEntityFactsByIndex(index) {
+            const entity = getEntityFromList('entities', index);
+            if (!entity) {
+                alert('Nie udało się odnaleźć danych encji.');
+                return;
+            }
+            showEntityFacts(entity);
+        }
+
+        function showEntityFacts(entityPayload) {
+            const entity = typeof entityPayload === 'string'
+                ? JSON.parse(entityPayload)
+                : entityPayload;
+            const facts = entity.facts || {};
+            const documentFacts = facts.document || {};
+            const candidateFacts = facts.candidate || {};
+            const title = entity.surface && entity.surface !== entity.name
+                ? `${entity.surface} (${entity.name})`
+                : entity.name;
+
+            document.getElementById('entityFactsTitle').textContent = `Fakty identyfikacji: ${title}`;
+            document.getElementById('entityFactsDocumentPanel').innerHTML = [
+                renderFactsValue('Tekst otagowany', documentFacts.surface || entity.surface || entity.name),
+                renderFactsValue('Nazwa znormalizowana', documentFacts.normalized_name || entity.name),
+                renderFactsList('Context clues', documentFacts.context_clues || []),
+                renderFactsValue('Context years', documentFacts.context_years || []),
+            ].join('');
+            document.getElementById('entityFactsCandidatePanel').innerHTML = [
+                renderFactsValue('Etykieta encji', candidateFacts.label || entity.name),
+                renderFactsValue('Opis', candidateFacts.description || 'brak'),
+                renderFactsValue('Identyfikator', candidateFacts.url || entity.url),
+                renderFactsList('Key facts', candidateFacts.key_facts || []),
+            ].join('');
+            toggleEntityFactsModal(true);
+        }
+
+        function toggleCandidateSelectionModal(show) {
+            const modal = document.getElementById('candidateSelectionModal');
+            if (show) {
+                modal.classList.remove('hidden');
+                refreshBodyOverflow();
+                return;
+            }
+            modal.classList.add('hidden');
+            activeCandidateSelectionEntity = null;
+            refreshBodyOverflow();
+        }
+
+        function renderCandidateOption(candidate, index) {
+            const value = index === -1 ? 'none' : String(index);
+            const checked = index === -1 ? 'checked' : '';
+            const title = index === -1
+                ? 'Brak identyfikacji'
+                : `${candidate.name || candidate.id || 'Kandydat'} [${candidate.source || '?'}:${candidate.id || '?'}]`;
+            const description = index === -1
+                ? 'Pozostaw encję bez przypisanego identyfikatora referencyjnego.'
+                : candidate.description || 'Brak opisu.';
+            const facts = candidate ? [
+                ...(candidate.key_facts || []),
+                ...(candidate.claim_facts || []),
+            ].slice(0, 5) : [];
+
+            return `
+                <label class="block border border-gray-200 rounded-lg bg-white p-4 hover:border-blue-300 cursor-pointer">
+                    <div class="flex gap-3">
+                        <input type="radio" name="candidateSelection" value="${escapeHtml(value)}" ${checked}
+                            class="mt-1 h-4 w-4 text-blue-600">
+                        <div class="min-w-0 flex-1">
+                            <div class="font-semibold text-gray-900">${escapeHtml(title)}</div>
+                            ${candidate && candidate.url ? `<a href="${escapeHtml(candidate.url)}" target="_blank" class="text-sm text-blue-600 hover:underline break-all">${escapeHtml(candidate.url)}</a>` : ''}
+                            <p class="text-sm text-gray-600 mt-1">${escapeHtml(description)}</p>
+                            ${candidate && candidate.life ? `<p class="text-xs text-gray-500 mt-1">Chronologia: ${escapeHtml(candidate.life)}; ${escapeHtml(candidate.temporal_status || 'unknown')} (${escapeHtml(candidate.temporal_reason || '')})</p>` : ''}
+                            ${candidate && candidate.matched_queries && candidate.matched_queries.length ? `<p class="text-xs text-gray-500 mt-1">Zapytania: ${escapeHtml(candidate.matched_queries.join(', '))}</p>` : ''}
+                            ${facts.length ? `<ul class="mt-2 text-xs text-gray-600 list-disc list-inside space-y-1">${facts.map(fact => `<li>${escapeHtml(fact)}</li>`).join('')}</ul>` : ''}
+                        </div>
+                    </div>
+                </label>
+            `;
+        }
+
+        function showCandidateSelectionByIndex(index) {
+            const entity = getEntityFromList('unresolved_entities', index);
+            if (!entity) {
+                alert('Nie udało się odnaleźć danych encji.');
+                return;
+            }
+            showCandidateSelectionModal(entity);
+        }
+
+        function showCandidateSelectionModal(entityPayload) {
+            const entity = typeof entityPayload === 'string'
+                ? JSON.parse(entityPayload)
+                : entityPayload;
+            activeCandidateSelectionEntity = entity;
+            const title = entity.surface && entity.surface !== entity.name
+                ? `${entity.surface} (${entity.name})`
+                : entity.name;
+            document.getElementById('candidateSelectionTitle').textContent = `Wybierz kandydata: ${title}`;
+            const suggestions = entity.candidate_suggestions || [];
+            document.getElementById('candidateSelectionList').innerHTML = [
+                renderCandidateOption(null, -1),
+                ...suggestions.map((candidate, index) => renderCandidateOption(candidate, index)),
+            ].join('');
+            toggleCandidateSelectionModal(true);
+        }
+
+        function findXmlEntityNodes(entity) {
+            if (!currentXmlDoc || !entity) return [];
+            const nodes = currentXmlDoc.getElementsByTagNameNS('*', entity.type).length
+                ? currentXmlDoc.getElementsByTagNameNS('*', entity.type)
+                : currentXmlDoc.getElementsByTagName(entity.type);
+            return Array.from(nodes).filter(node => {
+                const key = node.getAttribute('key') || '';
+                const text = (node.textContent || '').trim();
+                return key === entity.name || text === entity.surface || text === entity.name;
+            });
+        }
+
+        function applyManualCandidateSelection() {
+            if (!activeCandidateSelectionEntity) return;
+            const selectedInput = document.querySelector('input[name="candidateSelection"]:checked');
+            if (!selectedInput) {
+                alert('Wybierz jedną pozycję z listy.');
+                return;
+            }
+
+            const suggestions = activeCandidateSelectionEntity.candidate_suggestions || [];
+            const selectedCandidate = selectedInput.value === 'none'
+                ? null
+                : suggestions[Number(selectedInput.value)];
+            const nodes = findXmlEntityNodes(activeCandidateSelectionEntity);
+            if (!nodes.length) {
+                alert('Nie udało się odnaleźć odpowiadającej encji w bieżącym XML.');
+                return;
+            }
+
+            nodes.forEach(node => {
+                if (!selectedCandidate) {
+                    node.removeAttribute('ref');
+                    return;
+                }
+                node.setAttribute('key', selectedCandidate.name || activeCandidateSelectionEntity.name);
+                node.setAttribute('ref', selectedCandidate.url);
+                node.setAttribute('cert', 'medium');
+                node.setAttribute('resp', '#manual');
+            });
+
+            syncXmlOutputFromCurrentDoc();
+            renderPreview();
+
+            if (selectedCandidate) {
+                const manuallySelectedEntity = {
+                    name: selectedCandidate.name || activeCandidateSelectionEntity.name,
+                    surface: activeCandidateSelectionEntity.surface,
+                    type: activeCandidateSelectionEntity.type,
+                    url: selectedCandidate.url,
+                    manual: true,
+                    original_unresolved_entity: activeCandidateSelectionEntity,
+                    manual_candidate: selectedCandidate,
+                    facts: {
+                        document: (activeCandidateSelectionEntity.facts || {}).document || {
+                            surface: activeCandidateSelectionEntity.surface,
+                            normalized_name: activeCandidateSelectionEntity.name,
+                            context_clues: [],
+                            context_years: [],
+                        },
+                        candidate: {
+                            label: selectedCandidate.name || activeCandidateSelectionEntity.name,
+                            url: selectedCandidate.url,
+                            source: selectedCandidate.source || '',
+                            id: selectedCandidate.id || '',
+                            description: selectedCandidate.description || '',
+                            key_facts: selectedCandidate.key_facts || [],
+                        },
+                    },
+                };
+                currentIdentificationData.entities = (currentIdentificationData.entities || [])
+                    .filter(entity => !(
+                        entity.type === manuallySelectedEntity.type
+                        && (entity.surface || entity.name) === (manuallySelectedEntity.surface || manuallySelectedEntity.name)
+                    ))
+                    .concat(manuallySelectedEntity);
+                currentIdentificationData.unresolved_entities = (currentIdentificationData.unresolved_entities || [])
+                    .filter(entity => !(
+                        entity.type === activeCandidateSelectionEntity.type
+                        && entity.name === activeCandidateSelectionEntity.name
+                        && entity.surface === activeCandidateSelectionEntity.surface
+                    ));
+                renderIdentificationLists({
+                    identification_performed: true,
+                    entities: currentIdentificationData.entities,
+                    unresolved_entities: currentIdentificationData.unresolved_entities,
+                });
+                renderWorkflowStatus(`Ręcznie przypisano identyfikator dla encji „${activeCandidateSelectionEntity.surface || activeCandidateSelectionEntity.name}”.`);
+            } else {
+                renderWorkflowStatus(`Pozostawiono encję „${activeCandidateSelectionEntity.surface || activeCandidateSelectionEntity.name}” bez identyfikatora.`);
+            }
+
+            toggleCandidateSelectionModal(false);
+        }
+
+        function revertManualIdentificationByIndex(index) {
+            const entity = getEntityFromList('entities', index);
+            if (!entity) {
+                alert('Nie udało się odnaleźć danych encji.');
+                return;
+            }
+            revertManualIdentification(entity);
+        }
+
+        function revertManualIdentification(entityPayload) {
+            const entity = typeof entityPayload === 'string'
+                ? JSON.parse(entityPayload)
+                : entityPayload;
+            if (!entity.manual) {
+                return;
+            }
+
+            const originalUnresolvedEntity = entity.original_unresolved_entity || {
+                name: entity.name,
+                surface: entity.surface || entity.name,
+                type: entity.type,
+                reason: 'manual_reverted',
+                candidate_suggestions: [],
+            };
+            const nodes = findXmlEntityNodes(entity);
+            if (!nodes.length) {
+                alert('Nie udało się odnaleźć odpowiadającej encji w bieżącym XML.');
+                return;
+            }
+
+            nodes.forEach(node => {
+                node.removeAttribute('ref');
+                node.removeAttribute('cert');
+                node.removeAttribute('resp');
+                if (originalUnresolvedEntity.name) {
+                    node.setAttribute('key', originalUnresolvedEntity.name);
+                } else {
+                    node.removeAttribute('key');
+                }
+            });
+
+            currentIdentificationData.entities = (currentIdentificationData.entities || [])
+                .filter(item => !(
+                    item.manual
+                    && item.type === entity.type
+                    && item.url === entity.url
+                    && (item.surface || item.name) === (entity.surface || entity.name)
+                ));
+
+            const unresolvedExists = (currentIdentificationData.unresolved_entities || []).some(item => (
+                item.type === originalUnresolvedEntity.type
+                && item.name === originalUnresolvedEntity.name
+                && item.surface === originalUnresolvedEntity.surface
+            ));
+            if (!unresolvedExists) {
+                currentIdentificationData.unresolved_entities = [
+                    ...(currentIdentificationData.unresolved_entities || []),
+                    originalUnresolvedEntity,
+                ].sort((a, b) => (
+                    `${a.type || ''}|${a.name || ''}|${a.surface || ''}`
+                        .localeCompare(`${b.type || ''}|${b.name || ''}|${b.surface || ''}`, 'pl')
+                ));
+            }
+
+            syncXmlOutputFromCurrentDoc();
+            renderPreview();
+            renderIdentificationLists({
+                identification_performed: true,
+                entities: currentIdentificationData.entities,
+                unresolved_entities: currentIdentificationData.unresolved_entities,
+            });
+            renderWorkflowStatus(`Cofnięto ręczny wybór dla encji „${entity.surface || entity.name}”.`);
         }
 
         async function parseApiResponse(response, actionLabel) {
@@ -1339,6 +1805,8 @@ Sultan Bayazeth han, Dei gratia imperator Graeciae, Asiae atque Europae et mariu
             currentXmlDoc = null;
             currentIdentificationPerformed = false;
             currentDiagnosticLogFile = null;
+            currentIdentificationData = { entities: [], unresolved_entities: [] };
+            activeCandidateSelectionEntity = null;
         }
 
         // funkcja Wyczyść
@@ -1661,6 +2129,8 @@ Sultan Bayazeth han, Dei gratia imperator Graeciae, Asiae atque Europae et mariu
             const settingsModal = document.getElementById('settingsModal');
             const dictionaryModal = document.getElementById('dictionaryModal');
             const logSnippetModal = document.getElementById('logSnippetModal');
+            const candidateSelectionModal = document.getElementById('candidateSelectionModal');
+            const entityFactsModal = document.getElementById('entityFactsModal');
             if (event.target == modal) {
                 toggleHelp(false);
             }
@@ -1672,6 +2142,12 @@ Sultan Bayazeth han, Dei gratia imperator Graeciae, Asiae atque Europae et mariu
             }
             if (event.target == logSnippetModal) {
                 toggleLogSnippetModal(false);
+            }
+            if (event.target == candidateSelectionModal) {
+                toggleCandidateSelectionModal(false);
+            }
+            if (event.target == entityFactsModal) {
+                toggleEntityFactsModal(false);
             }
             if (!event.target.closest('#tagContextMenu')) {
                 hideTagContextMenu();

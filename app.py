@@ -272,11 +272,29 @@ def identify_entities_in_soup(soup, document_years):
             tag['ref'] = selected_url
             entity_key = (norm_name, selected_url)
             if entity_key not in seen_entities:
+                selected_candidate = decision.get("selected_candidate") or {}
                 entities.append({
                     "name": norm_name,
                     "surface": name,
                     "type": tag_type,
                     "url": selected_url,
+                    "facts": {
+                        "document": {
+                            "surface": name,
+                            "normalized_name": norm_name,
+                            "context_clues": entity_analysis.get("context_clues", []),
+                            "context_years": entity_analysis.get("context_years", []),
+                            "posthumous_context": entity_analysis.get("posthumous_context", False),
+                        },
+                        "candidate": {
+                            "label": selected_candidate.get("name", norm_name),
+                            "url": selected_url,
+                            "source": selected_candidate.get("source", ""),
+                            "id": selected_candidate.get("id", ""),
+                            "description": selected_candidate.get("description", ""),
+                            "key_facts": selected_candidate.get("key_facts", []),
+                        },
+                    },
                 })
                 seen_entities.add(entity_key)
         else:
@@ -287,6 +305,16 @@ def identify_entities_in_soup(soup, document_years):
                     "surface": name,
                     "type": tag_type,
                     "reason": decision.get("reason", "not_selected"),
+                    "candidate_suggestions": link_result.get("candidate_suggestions", []),
+                    "facts": {
+                        "document": {
+                            "surface": name,
+                            "normalized_name": norm_name,
+                            "context_clues": entity_analysis.get("context_clues", []),
+                            "context_years": entity_analysis.get("context_years", []),
+                            "posthumous_context": entity_analysis.get("posthumous_context", False),
+                        },
+                    },
                 })
                 seen_unresolved_entities.add(unresolved_key)
 
