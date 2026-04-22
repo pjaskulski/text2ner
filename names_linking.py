@@ -2,6 +2,9 @@ import json
 import os
 import re
 import shutil
+import fcntl
+import threading
+import time
 from contextvars import ContextVar
 from datetime import datetime, timedelta
 
@@ -35,6 +38,16 @@ CURRENT_GEMINI_MODEL = ContextVar("CURRENT_GEMINI_MODEL", default=DEFAULT_GEMINI
 DIAGNOSTIC_LOG_RETENTION_HOURS = 48
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_DIR = os.path.join(BASE_DIR, "config")
+WIKIDATA_REQUEST_INTERVAL_SECONDS = float(os.environ.get("WIKIDATA_REQUEST_INTERVAL_SECONDS", "0.75"))
+WIKIDATA_429_MAX_RETRIES = int(os.environ.get("WIKIDATA_429_MAX_RETRIES", "2"))
+WIKIDATA_429_DEFAULT_WAIT_SECONDS = int(os.environ.get("WIKIDATA_429_DEFAULT_WAIT_SECONDS", "60"))
+WIKIDATA_429_MAX_WAIT_SECONDS = int(os.environ.get("WIKIDATA_429_MAX_WAIT_SECONDS", "120"))
+WIKIDATA_THROTTLE_STATE_PATH = os.environ.get(
+    "WIKIDATA_THROTTLE_STATE_PATH",
+    "/tmp/text2ner_wikidata_throttle.state",
+)
+_WIKIDATA_THROTTLE_LOCK = threading.Lock()
+_LAST_WIKIDATA_REQUEST_AT = 0.0
 
 
 WIKIBASE_SOURCES = {
@@ -639,9 +652,81 @@ SEMANTIC_FALLBACK_OFFICE_FAMILIES = {
 
 
 # -------------------------------- HELPERS ------------------------------------
+def is_wikidata_url(url):
+    """Sprawdza, czy żądanie trafia do publicznych usług Wikidaty."""
+    return "wikidata.org" in normalize_whitespace(url).lower()
+
+
+def throttle_wikidata_request():
+    """Ogranicza tempo zapytań do Wikidaty także między workerami aplikacji."""
+    if WIKIDATA_REQUEST_INTERVAL_SECONDS <= 0:
+        return
+
+    try:
+        with open(WIKIDATA_THROTTLE_STATE_PATH, "a+", encoding="utf-8") as throttle_file:
+            fcntl.flock(throttle_file, fcntl.LOCK_EX)
+            throttle_file.seek(0)
+            raw_timestamp = throttle_file.read().strip()
+            last_request_at = float(raw_timestamp) if raw_timestamp else 0.0
+            now = time.monotonic()
+            wait_seconds = WIKIDATA_REQUEST_INTERVAL_SECONDS - (now - last_request_at)
+            if wait_seconds > 0:
+                time.sleep(wait_seconds)
+            throttle_file.seek(0)
+            throttle_file.truncate()
+            throttle_file.write(str(time.monotonic()))
+            throttle_file.flush()
+            fcntl.flock(throttle_file, fcntl.LOCK_UN)
+            return
+    except Exception:
+        pass
+
+    throttle_wikidata_request_in_process()
+
+
+def throttle_wikidata_request_in_process():
+    """Awaryjny limiter używany, gdy nie uda się skorzystać z blokady plikowej."""
+    global _LAST_WIKIDATA_REQUEST_AT
+    with _WIKIDATA_THROTTLE_LOCK:
+        now = time.monotonic()
+        wait_seconds = WIKIDATA_REQUEST_INTERVAL_SECONDS - (now - _LAST_WIKIDATA_REQUEST_AT)
+        if wait_seconds > 0:
+            time.sleep(wait_seconds)
+        _LAST_WIKIDATA_REQUEST_AT = time.monotonic()
+
+
+def parse_retry_after_seconds(value):
+    """Interpretuje nagłówek Retry-After jako liczbę sekund oczekiwania."""
+    value = normalize_whitespace(value)
+    if not value:
+        return WIKIDATA_429_DEFAULT_WAIT_SECONDS
+    if value.isdigit():
+        return int(value)
+    return WIKIDATA_429_DEFAULT_WAIT_SECONDS
+
+
 def get_json_response(url, params, headers, source_label):
     """Pobiera JSON z defensywną obsługą błędów HTTP i odpowiedzi nie-JSON."""
-    response = requests.get(url, params=params, headers=headers, timeout=30)
+    wikidata_request = is_wikidata_url(url)
+    max_attempts = WIKIDATA_429_MAX_RETRIES + 1 if wikidata_request else 1
+    response = None
+
+    for attempt in range(1, max_attempts + 1):
+        if wikidata_request:
+            throttle_wikidata_request()
+
+        response = requests.get(url, params=params, headers=headers, timeout=30)
+        if response.status_code != 429 or not wikidata_request or attempt >= max_attempts:
+            break
+
+        retry_after = parse_retry_after_seconds(response.headers.get("Retry-After"))
+        retry_after = max(1, min(retry_after, WIKIDATA_429_MAX_WAIT_SECONDS))
+        diagnostic_log(
+            f"Wikidata zwróciła HTTP 429 dla {source_label}; "
+            f"czekam {retry_after}s przed ponowieniem ({attempt}/{max_attempts - 1})."
+        )
+        time.sleep(retry_after)
+
     content_type = response.headers.get("Content-Type", "")
     if response.status_code >= 400:
         preview = response.text[:200].replace("\n", " ")
