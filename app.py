@@ -226,6 +226,15 @@ def get_entity_context(tag):
     return re.sub(r'\s+', ' ', raw_text).strip()
 
 
+def build_entity_resolution_cache_key(tag_type, name, context):
+    """Buduje kontekstowy klucz cache dla wyniku identyfikacji pojedynczej encji."""
+    return (
+        normalize_whitespace(tag_type),
+        normalize_whitespace(name).casefold(),
+        normalize_whitespace(context).casefold(),
+    )
+
+
 def identify_entities_in_soup(soup, document_years):
     """Wykonuje linking dla `persName` i `placeName` na już otagowanym XML-u."""
     entities = []
@@ -244,11 +253,11 @@ def identify_entities_in_soup(soup, document_years):
             del tag['ref']
 
         context = get_entity_context(tag)
-        cache_key = (tag_type, normalize_whitespace(name).casefold())
+        cache_key = build_entity_resolution_cache_key(tag_type, name, context)
         if cache_key in resolved_entity_cache:
             link_result = resolved_entity_cache[cache_key]
             diagnostic_log(
-                f"Użyto cache dla encji '{name}' ({tag_type}) -> "
+                f"Użyto cache kontekstowego dla encji '{name}' ({tag_type}) -> "
                 f"{link_result['decision'].get('selected_url')}"
             )
         else:

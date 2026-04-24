@@ -66,6 +66,8 @@
   "abbas": "opat",
   "abbot": "opat",
   "papa": "papież",
+  "pape": "papież",
+  "papal": "papieski",
   "papiez": "papież",
   "papież": "papież",
   "palatinus": "wojewoda",
@@ -90,6 +92,8 @@
   "suffragan": "sufragan",
   "suffraganeus": "sufragan",
   "sufragan": "sufragan",
+  "thesaurarius": "skarbnik",
+  "treasurer": "skarbnik",
   "vir": "duchowny",
   "voivode": "wojewoda",
   "wojewoda": "wojewoda"

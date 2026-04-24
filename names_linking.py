@@ -9,7 +9,7 @@ from contextvars import ContextVar
 from datetime import datetime, timedelta
 
 import requests
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
@@ -297,6 +297,9 @@ DEFAULT_POLISH_PERSON_EQUIVALENTS = {
 }
 
 PERSON_SEARCH_VARIANTS = {
+    "augustino": ["Augustinus", "Augustyn", "Agostino", "Augustine"],
+    "augustinus": ["Augustyn", "Agostino", "Augustine"],
+    "augustyn": ["Augustinus", "Agostino", "Augustine"],
     "ioannes": ["Johannes", "Johann", "Jan"],
     "iohannes": ["Johannes", "Johann", "Jan"],
     "ioannis": ["Johannes", "Johann", "Jan"],
@@ -321,6 +324,11 @@ DEFAULT_POLISH_PLACE_EQUIVALENTS = {
     "polonia": "Polska",
     "posnania": "Poznań",
     "posnaniensis": "Poznań",
+    "perugia": "Perugia",
+    "perusia": "Perugia",
+    "perusina": "Perugia",
+    "perusino": "Perugia",
+    "perusinus": "Perugia",
     "prussia": "Prusy",
     "russia": "Ruś",
     "ruthenia": "Ruś",
@@ -358,6 +366,11 @@ DEFAULT_POLISH_PLACE_ADJECTIVAL_EQUIVALENTS = {
     "pomeranie": "pomorski",
     "posnania": "poznański",
     "posnaniensis": "poznański",
+    "perugia": "perugiański",
+    "perusia": "perugiański",
+    "perusina": "perugiański",
+    "perusino": "perugiański",
+    "perusinus": "perugiański",
     "prussia": "pruski",
     "russia": "ruski",
     "ruthenia": "ruski",
@@ -399,11 +412,15 @@ DEFAULT_PLWIKI_OFFICE_EQUIVALENTS = {
     "papa": "papież",
     "papiez": "papież",
     "papież": "papież",
+    "pape": "papież",
+    "papal": "papieski",
     "pope": "papież",
     "presbyter": "prezbiter",
     "priest": "kapłan",
     "rex": "król",
     "sacerdos": "kapłan",
+    "thesaurarius": "skarbnik",
+    "treasurer": "skarbnik",
     "vir": "duchowny",
     "wojewoda": "wojewoda",
 }
@@ -1655,6 +1672,85 @@ def resolve_fallback_year_for_date_tag(tag, document_years):
     return None
 
 
+def build_latin_day_month_year_pattern():
+    """Buduje regex dla prostych łacińskich dat typu `19 decembris 1392`."""
+    month_tokens = sorted(DATE_MONTH_TOKENS.keys(), key=lambda value: (-len(value), value))
+    month_pattern = "|".join(re.escape(month_token) for month_token in month_tokens)
+    return re.compile(
+        rf"(?<![\w-])(?P<date>(?P<day>\d{{1,2}}|[ivxlcdm]{{1,8}})\s+"
+        rf"(?P<month>{month_pattern})\s+"
+        rf"(?P<year>[12]\d{{3}}))(?![\w-])",
+        flags=re.IGNORECASE,
+    )
+
+
+LATIN_DAY_MONTH_YEAR_PATTERN = build_latin_day_month_year_pattern()
+
+
+def text_node_can_receive_date_tag(text_node):
+    """Sprawdza, czy można bezpiecznie dodać <date> w danym węźle tekstowym."""
+    parent = text_node.parent
+    if parent is None:
+        return False
+    if parent.find_parent("date") or parent.name == "date":
+        return False
+    if parent.name in {"key", "ref"}:
+        return False
+    return True
+
+
+def tag_dates_in_text_node(soup, text_node):
+    """Dodaje tagi <date> dla prostych dat znalezionych w pojedynczym węźle tekstowym."""
+    raw_text = str(text_node)
+    matches = list(LATIN_DAY_MONTH_YEAR_PATTERN.finditer(raw_text))
+    if not matches:
+        return 0
+
+    inserted_count = 0
+    cursor = 0
+    for match in matches:
+        date_text = match.group("date")
+        normalized_when = infer_iso_date_value_from_text(date_text)
+        if not normalized_when:
+            continue
+
+        if match.start() > cursor:
+            text_node.insert_before(NavigableString(raw_text[cursor:match.start()]))
+
+        date_tag = soup.new_tag("date")
+        date_tag["when"] = normalized_when
+        date_tag.string = date_text
+        text_node.insert_before(date_tag)
+        inserted_count += 1
+        cursor = match.end()
+
+    if inserted_count == 0:
+        return 0
+    if cursor < len(raw_text):
+        text_node.insert_before(NavigableString(raw_text[cursor:]))
+    text_node.extract()
+    return inserted_count
+
+
+def tag_untagged_latin_dates(tagged_xml):
+    """Uzupełnia oczywiste, nieotagowane daty łacińskie pozostawione przez model."""
+    soup = BeautifulSoup(tagged_xml, "xml")
+    inserted_count = 0
+    for text_node in list(soup.find_all(string=True)):
+        if not text_node_can_receive_date_tag(text_node):
+            continue
+        inserted_count += tag_dates_in_text_node(soup, text_node)
+
+    if inserted_count:
+        diagnostic_log(
+            f"Deterministycznie dodano {inserted_count} brakujących tagów <date> dla prostych dat łacińskich."
+        )
+
+    normalized_xml = soup.prettify(formatter="minimal")
+    normalized_xml = re.sub(r"<\?xml.*?\?>", "", normalized_xml).strip()
+    return normalized_xml
+
+
 def normalize_tagged_dates(tagged_xml):
     """Waliduje i uzupełnia atrybuty `when` w tagach `date` zwróconych przez model."""
     soup = BeautifulSoup(tagged_xml, "xml")
@@ -1723,6 +1819,7 @@ def cleanup_tagged_xml_output(tagged_text, enabled_tag_types=None):
     if "orgName" in enabled_tag_types:
         cleaned_text = normalize_tagged_org_names(cleaned_text)
     if "date" in enabled_tag_types:
+        cleaned_text = tag_untagged_latin_dates(cleaned_text)
         cleaned_text = normalize_tagged_dates(cleaned_text)
     return unwrap_disallowed_entity_tags(cleaned_text, enabled_tag_types)
 
@@ -2422,6 +2519,9 @@ def expand_office_terms(office_terms):
         "rex": ["król", "krol", "king"],
         "regina": ["królowa", "krolowa", "queen"],
         "dux": ["książę", "ksiaze", "duke"],
+        "thesaurarius": ["skarbnik", "treasurer"],
+        "thesaurarius domini pape": ["skarbnik papieski", "papal treasurer", "treasurer of the pope"],
+        "pape thesaurarius": ["skarbnik papieski", "papal treasurer", "treasurer of the pope"],
     }
 
     for office_term in office_terms or []:
@@ -3202,6 +3302,9 @@ def build_query_plan(entity_analysis):
     """Buduje plan zapytań do źródeł referencyjnych dla jednej encji."""
     queries = []
     seen = set()
+    name_particle_tokens = {
+        "de", "del", "della", "di", "do", "dos", "du", "van", "von", "zu", "z", "ze"
+    }
 
     def add_query(value):
         value = normalize_whitespace(value)
@@ -3233,6 +3336,39 @@ def build_query_plan(entity_analysis):
                 add_base_name(variant)
         return ordered
 
+    def add_particleless_person_variants(value):
+        value = normalize_whitespace(value)
+        tokens = re.findall(r"[\w-]+", value, flags=re.UNICODE)
+        if len(tokens) < 3:
+            return
+
+        folded_tokens = [token.casefold() for token in tokens]
+        if not any(token in name_particle_tokens for token in folded_tokens[1:-1]):
+            return
+
+        particleless_tokens = [
+            token for token, folded in zip(tokens, folded_tokens)
+            if folded not in name_particle_tokens
+        ]
+        if len(particleless_tokens) < 2:
+            return
+
+        add_query(" ".join(particleless_tokens))
+        first_name_equivalent = get_polish_equivalent(particleless_tokens[0], "persName")
+        if first_name_equivalent:
+            add_query(" ".join([first_name_equivalent] + particleless_tokens[1:]))
+        add_query(particleless_tokens[-1])
+
+    def office_query_priority(value):
+        value = normalize_for_lookup(value)
+        if any(marker in value for marker in ("thesaurarius", "treasurer", "skarbnik")):
+            return 0
+        if any(marker in value for marker in ("cardinalis", "cardinal", "kardynal", "kardynał")):
+            return 1
+        if any(marker in value for marker in ("episcopus", "bishop", "biskup")):
+            return 2
+        return 3
+
     add_query(entity_analysis.get("surface"))
     add_query(entity_analysis.get("normalized_best"))
 
@@ -3243,13 +3379,29 @@ def build_query_plan(entity_analysis):
         add_query(value)
 
     if entity_analysis.get("tag_type") == "persName":
+        person_name_values = []
+        for value in (
+            [entity_analysis.get("surface"), entity_analysis.get("normalized_best")]
+            + list(entity_analysis.get("lemma_candidates", [])[:4])
+            + list(entity_analysis.get("surface_variants", [])[:3])
+        ):
+            normalized_value = normalize_whitespace(value)
+            if normalized_value:
+                person_name_values.append(normalized_value)
+        for value in person_name_values:
+            add_particleless_person_variants(value)
+
         base_names = order_person_base_names(
             entity_analysis.get("lemma_candidates", [])[:4] or [entity_analysis.get("normalized_best")]
         )[:4]
-        office_terms = expand_office_terms(entity_analysis.get("office_terms", []))[:4]
+        office_terms = sorted(
+            expand_office_terms(entity_analysis.get("office_terms", [])),
+            key=lambda value: (office_query_priority(value), normalize_for_lookup(value)),
+        )[:6]
         place_terms = expand_place_terms(entity_analysis.get("place_terms", []))[:5]
         for base_name in base_names:
-            for office_term in office_terms[:3]:
+            add_query(base_name)
+            for office_term in office_terms[:4]:
                 add_query(f"{base_name} {office_term}")
             for place_term in place_terms[:3]:
                 add_query(f"{base_name} {place_term}")
@@ -3267,7 +3419,7 @@ def build_query_plan(entity_analysis):
             for place_term in place_terms[:2]:
                 add_query(f"{base_name} {place_term}")
 
-    return queries[:24]
+    return queries[:32]
 
 
 def candidate_name_quality(candidate, entity_analysis):
@@ -3522,6 +3674,179 @@ def candidate_query_specificity(candidate, entity_analysis):
     return score
 
 
+def build_candidate_context_match_corpus(candidate):
+    """Łączy pola kandydata do dopasowań sygnałów z kontekstu źródłowego."""
+    values = [candidate.get("name", ""), candidate.get("desc", "")]
+    values.extend(extract_multilang_values(candidate.get("labels", {})))
+    values.extend(extract_multilang_values(candidate.get("descriptions", {})))
+    values.append(candidate.get("wikipedia_lead", ""))
+    for aliases in candidate.get("aliases", {}).values():
+        values.extend(aliases)
+    values.extend(candidate.get("instance_of_texts", []))
+    values.extend(candidate.get("priority_claim_facts", []))
+    values.extend(candidate.get("claim_facts", []))
+    return " ".join(
+        normalize_for_lookup(value)
+        for value in values
+        if normalize_for_lookup(value)
+    )
+
+
+def has_context_signal_match(corpus, signal):
+    """Sprawdza dopasowanie sygnału lub jego informacyjnych tokenów w korpusie kandydata."""
+    signal = normalize_for_lookup(signal)
+    if len(signal) < 3:
+        return False
+    if signal in corpus:
+        return True
+
+    tokens = [
+        token for token in tokenize_for_match(signal)
+        if token not in GENERIC_PLACE_SIGNAL_TOKENS and token not in {"domini", "pape", "pope"}
+    ]
+    if not tokens:
+        return False
+    return any(token in corpus for token in tokens)
+
+
+def candidate_context_signal_score(candidate, entity_analysis):
+    """Punktuje zgodność faktów kandydata z urzędami i miejscami rozpoznanymi w kontekście."""
+    corpus = build_candidate_context_match_corpus(candidate)
+    if not corpus:
+        return 0
+
+    score = 0
+    office_signals = _normalize_string_list(
+        list(entity_analysis.get("office_terms", []))
+        + expand_office_terms(entity_analysis.get("office_terms", [])),
+        min_length=3,
+    )
+    place_signals = _normalize_string_list(
+        list(entity_analysis.get("place_terms", []))
+        + expand_place_terms(entity_analysis.get("place_terms", [])),
+        min_length=3,
+    )
+
+    for office_signal in office_signals:
+        if has_context_signal_match(corpus, office_signal):
+            score += 4
+            normalized_signal = normalize_for_lookup(office_signal)
+            if any(marker in normalized_signal for marker in ("thesaurarius", "treasurer", "skarbnik")):
+                score += 4
+
+    for place_signal in place_signals:
+        if has_context_signal_match(corpus, place_signal):
+            score += 3
+
+    return score
+
+
+def has_ecclesiastical_person_context(entity_analysis):
+    """Sprawdza, czy kontekst osoby wymaga profilu duchownego lub urzędnika kościelnego."""
+    values = []
+    values.extend(entity_analysis.get("office_terms", []))
+    values.extend(entity_analysis.get("context_clues", []))
+    context_text = normalize_for_lookup(" ".join(values))
+    markers = {
+        "abbas", "abbot", "apostolic", "apostolica", "apostolskiej", "bishop",
+        "biskup", "canonicus", "canon", "cardinal", "cardinalis", "cleric",
+        "duchowny", "ecclesia", "ecclesiae", "episcopus", "kardynal", "kardynał",
+        "papa", "pape", "papal", "papieski", "papież", "pope", "presbyter",
+        "sacerdos", "sedes apostolica", "thesaurarius", "treasurer",
+    }
+    return any(marker in context_text for marker in markers)
+
+
+def candidate_has_ecclesiastical_profile(candidate):
+    """Rozpoznaje, czy dane kandydata zawierają sygnały profilu kościelnego."""
+    corpus = build_candidate_context_match_corpus(candidate)
+    markers = {
+        "abbas", "abbot", "apostolic", "apostolica", "bishop", "biskup",
+        "canon", "canonicus", "cardinal", "cardinalis", "catholic",
+        "cleric", "clergy", "duchowny", "ecclesia", "ecclesiae", "episcopus",
+        "kaplan", "kapłan", "kardynal", "kardynał", "papal", "papiez",
+        "papież", "pope", "presbyter", "priest", "sacerdos", "sedes apostolica",
+        "thesaurarius", "treasurer",
+    }
+    return any(marker in corpus for marker in markers)
+
+
+def candidate_has_strong_incompatible_profile(candidate):
+    """Wykrywa świeckie/nowoczesne profile skrajnie niepasujące do urzędnika kościelnego."""
+    corpus = build_candidate_context_match_corpus(candidate)
+    incompatible_markers = {
+        "actress", "aktor", "aktorka", "artist", "biochemist", "biolog",
+        "businessperson", "chemist", "chemik", "chemical", "cinema",
+        "diplomat", "diplomata", "filmmaker", "journalist", "model",
+        "molecular", "muzyk", "physicist", "piosenkar", "politician",
+        "polityk", "scientist", "sports", "sportowiec", "television",
+        "united states ambassador", "zawodnik",
+    }
+    modern_markers = {
+        "ambasador stanów zjednoczonych",
+        "ambassador of the united states",
+        "journalist",
+        "dziennikarz",
+        "united states ambassador",
+    }
+    modern_year_markers = {
+        " ur 19", " ur 20", " ur. 19", " ur. 20", " born 19", " born 20",
+        " urodzony 19", " urodzony 20", "2025",
+    }
+    geographic_false_friends = {
+        "citizenship peru",
+        "obywatelstwo peru",
+        "peruvian",
+        "peruwia",
+        "peruwianka",
+        "peruwijski",
+    }
+    female_markers = {
+        "female", "kobieta", "płeć kobieta", "sex or gender female",
+    }
+    return {
+        "incompatible_occupation": any(marker in corpus for marker in incompatible_markers),
+        "modern_profile": (
+            any(marker in corpus for marker in modern_markers)
+            or any(marker in corpus for marker in modern_year_markers)
+        ),
+        "geographic_false_friend": any(marker in corpus for marker in geographic_false_friends),
+        "female": any(marker in corpus for marker in female_markers),
+    }
+
+
+def candidate_manual_rejection_reason(candidate, entity_analysis):
+    """Zwraca powód odrzucenia propozycji ręcznej albo `None`, jeśli jest dopuszczalna."""
+    if should_use_temporal_matching(entity_analysis):
+        temporal = assess_candidate_temporal_fit(candidate, entity_analysis)
+        if temporal["status"] == "conflict":
+            return "conflict_chronology"
+
+    if entity_analysis.get("tag_type") != "persName":
+        return None
+
+    name_score = candidate_name_quality(candidate, entity_analysis)
+    context_score = candidate_context_signal_score(candidate, entity_analysis)
+    query_score = candidate_query_specificity(candidate, entity_analysis)
+    ecclesiastical_context = has_ecclesiastical_person_context(entity_analysis)
+    incompatible = candidate_has_strong_incompatible_profile(candidate)
+
+    if ecclesiastical_context and not candidate_has_ecclesiastical_profile(candidate):
+        if incompatible["modern_profile"]:
+            return "modern_profile_for_historical_ecclesiastical_context"
+        if incompatible["female"]:
+            return "incompatible_gender_for_ecclesiastical_office"
+        if incompatible["incompatible_occupation"]:
+            return "incompatible_occupation_for_ecclesiastical_context"
+        if incompatible["geographic_false_friend"] and context_score == 0:
+            return "geographic_false_friend"
+
+    if name_score == 0 and context_score == 0 and query_score <= 5:
+        return "weak_textual_and_contextual_match"
+
+    return None
+
+
 def order_candidates_for_review(candidates, entity_analysis):
     """Sortuje kandydatów tak, by najlepsze opcje były na początku listy."""
     source_priority = {"WikiHum": 0, "va.wiki.kul.pl": 1, "Wikidata": 2}
@@ -3529,6 +3854,7 @@ def order_candidates_for_review(candidates, entity_analysis):
         candidates,
         key=lambda candidate: (
             -candidate_temporal_rank(candidate, entity_analysis),
+            -candidate_context_signal_score(candidate, entity_analysis),
             -candidate_query_specificity(candidate, entity_analysis),
             -candidate_name_quality(candidate, entity_analysis),
             source_priority.get(candidate.get("source"), 9),
@@ -3599,27 +3925,28 @@ def format_candidate_suggestion(candidate, entity_analysis):
 
 def candidate_is_plausible_manual_suggestion(candidate, entity_analysis):
     """Odrzuca z listy ręcznej kandydatów wyraźnie niepasujących do kontekstu."""
-    if not should_use_temporal_matching(entity_analysis):
-        return True
-
-    temporal = assess_candidate_temporal_fit(candidate, entity_analysis)
-    if temporal["status"] == "conflict":
-        return False
-    return True
+    return candidate_manual_rejection_reason(candidate, entity_analysis) is None
 
 
 def build_candidate_suggestions(candidates, entity_analysis, max_count=5):
     """Wybiera kandydatów, których warto pokazać historykowi do ręcznego rozstrzygnięcia."""
     ordered = order_candidates_for_review(dedupe_candidates(candidates), entity_analysis)
-    plausible = [
-        candidate for candidate in ordered
-        if candidate_is_plausible_manual_suggestion(candidate, entity_analysis)
-    ]
-    if len(plausible) < len(ordered):
+    plausible = []
+    rejection_reasons = {}
+    for candidate in ordered:
+        rejection_reason = candidate_manual_rejection_reason(candidate, entity_analysis)
+        if rejection_reason:
+            rejection_reasons[rejection_reason] = rejection_reasons.get(rejection_reason, 0) + 1
+            continue
+        plausible.append(candidate)
+
+    rejected_count = len(ordered) - len(plausible)
+    if rejected_count:
         diagnostic_log(
             f"Propozycje ręczne dla '{entity_analysis.get('surface', '')}' "
             f"({entity_analysis.get('tag_type', '')}): odrzucono "
-            f"{len(ordered) - len(plausible)} kandydatów z konfliktem chronologicznym."
+            f"{rejected_count} kandydatów po weryfikacji profilu; "
+            f"powody={rejection_reasons}."
         )
     limited = limit_candidates_for_review(plausible, max_count=max_count, min_per_source=1)
     return [
@@ -3946,6 +4273,7 @@ def choose_candidate_with_gemini(name, context, tag_type, entity_analysis, candi
             "2. Dla persName wybieraj wyłącznie człowieka, zgodnego z kontekstem.\n"
             "3. Dla persName uwzględnij zgodność chronologiczną: kandydat żyjący wyraźnie przed lub po latach z kontekstu powinien być odrzucany.\n"
             "3a. Jeśli kontekst wyraźnie wskazuje wzmiankę pośmiertną (np. bone memorie, felicis recordacionis, sprawa majątku po zmarłym), data dokumentu może być nieco późniejsza od daty śmierci kandydata.\n"
+            "3b. Osoby duchowne mogły kolejno pełnić różne biskupstwa i urzędy kurialne. Nie odrzucaj kandydata wyłącznie dlatego, że w danych ma inną diecezję niż w kontekście, jeśli zgadzają się imię/nazwa, rzadki urząd kurialny, chronologia i ogólny profil osoby.\n"
         )
     else:
         extra_clues_block = (
