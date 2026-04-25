@@ -570,6 +570,9 @@
         const DEFAULT_ENABLED_RECOGNITION_TAG_TYPES = ['persName', 'placeName', 'date', 'roleName'];
         const DEFAULT_GEMINI_MODEL = 'gemini-3.1-flash-lite-preview';
         const IDENTIFY_PROGRESS_URL_TEMPLATE = "{{ url_for('identify_progress', progress_id='__PROGRESS_ID__') }}";
+        const IDENTIFY_JOBS_URL = "{{ url_for('create_identify_job_route') }}";
+        const IDENTIFY_JOB_STATUS_URL_TEMPLATE = "{{ url_for('get_identify_job_route', job_id='__JOB_ID__') }}";
+        const IDENTIFY_JOB_RESULT_URL_TEMPLATE = "{{ url_for('get_identify_job_result_route', job_id='__JOB_ID__') }}";
         const PREVIEW_PDF_URL = "{{ url_for('preview_pdf') }}";
         const TAG_SETTINGS_OPTIONS = [
             { value: 'persName', label: 'Osoby' },
@@ -1743,26 +1746,66 @@
             }
         }
 
+        function buildIdentifyJobStatusUrl(jobId) {
+            return IDENTIFY_JOB_STATUS_URL_TEMPLATE.replace('__JOB_ID__', encodeURIComponent(jobId));
+        }
+
+        function buildIdentifyJobResultUrl(jobId) {
+            return IDENTIFY_JOB_RESULT_URL_TEMPLATE.replace('__JOB_ID__', encodeURIComponent(jobId));
+        }
+
+        function wait(ms) {
+            return new Promise(resolve => window.setTimeout(resolve, ms));
+        }
+
+        async function waitForIdentifyJobResult(jobId) {
+            while (true) {
+                const statusResponse = await fetch(buildIdentifyJobStatusUrl(jobId));
+                const job = await parseApiResponse(statusResponse, 'sprawdzanie postępu identyfikacji');
+                renderIdentifyProgress(job);
+
+                if (job.status === 'done') {
+                    const resultResponse = await fetch(buildIdentifyJobResultUrl(jobId));
+                    return await parseApiResponse(resultResponse, 'pobieranie wyniku identyfikacji');
+                }
+                if (job.status === 'error' || job.status === 'expired') {
+                    throw new Error(job.error || job.message || 'Identyfikacja zakończyła się błędem.');
+                }
+
+                await wait(1200);
+            }
+        }
+
         async function identifyEntities() {
             const xml = document.getElementById('xmlOutput').textContent;
             if (!xml) return alert("Najpierw rozpoznaj encje.");
 
-            const progressId = createProgressId();
             setActionLoading('btnIdentify', 'spinnerIdentify', 'btnIdentifyText', true, 'Identyfikuj encje', 'Trwa identyfikacja...');
             document.getElementById('btnRecognize').disabled = true;
-            startIdentifyProgressPolling(progressId);
+            renderIdentifyProgress({
+                status: 'queued',
+                current: 0,
+                total: 0,
+                message: 'Przekazuję zadanie identyfikacji do kolejki...',
+            });
 
             try {
-                const response = await fetch("{{ url_for('identify') }}", {
+                const response = await fetch(IDENTIFY_JOBS_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         xml: xml,
                         model_name: selectedGeminiModel,
-                        progress_id: progressId,
                     })
                 });
-                const data = await parseApiResponse(response, 'identyfikacja encji');
+                const job = await parseApiResponse(response, 'uruchamianie identyfikacji encji');
+                renderIdentifyProgress({
+                    status: job.status || 'queued',
+                    current: 0,
+                    total: 0,
+                    message: job.message || 'Zadanie identyfikacji zostało przyjęte.',
+                });
+                const data = await waitForIdentifyJobResult(job.job_id);
                 if (data.model_name) {
                     selectedGeminiModel = data.model_name;
                 }
@@ -1792,7 +1835,6 @@
                 });
                 alert(err.message || "Błąd podczas identyfikacji.");
             } finally {
-                stopIdentifyProgressPolling();
                 setActionLoading('btnIdentify', 'spinnerIdentify', 'btnIdentifyText', false, 'Identyfikuj encje', 'Trwa identyfikacja...');
                 document.getElementById('btnRecognize').disabled = false;
             }

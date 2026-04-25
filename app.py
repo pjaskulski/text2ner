@@ -1,9 +1,12 @@
 import json
 import os
 import re
+import sqlite3
 import time
 import threading
+import uuid
 from html import escape
+from contextlib import contextmanager
 from functools import wraps
 from flask import Flask, render_template, request, jsonify, Response, send_file
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -50,6 +53,24 @@ PROGRESS_SESSION_DIR = os.environ.get(
     "TEXT2NER_PROGRESS_SESSION_DIR",
     "/tmp/text2ner_progress",
 )
+IDENTIFY_JOB_DB_PATH = os.environ.get(
+    "TEXT2NER_IDENTIFY_JOB_DB_PATH",
+    "/tmp/text2ner_identify_jobs.sqlite3",
+)
+IDENTIFY_JOB_RETENTION_SECONDS = int(os.environ.get(
+    "TEXT2NER_IDENTIFY_JOB_RETENTION_SECONDS",
+    str(48 * 60 * 60),
+))
+IDENTIFY_JOB_STALE_RUNNING_SECONDS = int(os.environ.get(
+    "TEXT2NER_IDENTIFY_JOB_STALE_RUNNING_SECONDS",
+    str(60 * 60),
+))
+IDENTIFY_WORKER_POLL_SECONDS = float(os.environ.get(
+    "TEXT2NER_IDENTIFY_WORKER_POLL_SECONDS",
+    "1.0",
+))
+IDENTIFY_WORKER_LOCK = threading.Lock()
+IDENTIFY_WORKER_STARTED = False
 
 # szablon nagłówka dokumentu TEI
 TEI_HEADER = """<?xml version="1.0" encoding="UTF-8"?>
@@ -557,6 +578,7 @@ def update_progress(progress_id, **updates):
         PROGRESS_SESSIONS[progress_id] = current
         progress_snapshot = dict(current)
     write_progress_session_file(progress_id, progress_snapshot)
+    update_identify_job(progress_id, **updates)
 
 
 def get_progress(progress_id):
@@ -570,6 +592,364 @@ def get_progress(progress_id):
     if progress:
         return progress
     return read_progress_session_file(progress_id)
+
+
+def get_identify_job_connection():
+    """Otwiera połączenie z lokalną bazą SQLite przechowującą zadania identyfikacji."""
+    db_dir = os.path.dirname(os.path.abspath(IDENTIFY_JOB_DB_PATH))
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+    connection = sqlite3.connect(IDENTIFY_JOB_DB_PATH, timeout=30)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA journal_mode=WAL")
+    connection.execute("PRAGMA busy_timeout=30000")
+    return connection
+
+
+@contextmanager
+def identify_job_connection():
+    """Udostępnia połączenie SQLite i zawsze je zamyka po zakończeniu operacji."""
+    connection = get_identify_job_connection()
+    try:
+        yield connection
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def init_identify_job_store():
+    """Tworzy tabelę jobów, jeśli nie istnieje."""
+    with identify_job_connection() as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS identify_jobs (
+                id TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                input_xml TEXT NOT NULL,
+                result_json TEXT,
+                error TEXT,
+                diagnostic_log_file TEXT,
+                model_name TEXT,
+                current INTEGER DEFAULT 0,
+                total INTEGER DEFAULT 0,
+                message TEXT DEFAULT '',
+                entity TEXT DEFAULT '',
+                entity_type TEXT DEFAULT '',
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                finished_at REAL
+            )
+            """
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_identify_jobs_status_created "
+            "ON identify_jobs(status, created_at)"
+        )
+
+
+def cleanup_identify_jobs():
+    """Usuwa stare zakończone joby i oznacza bardzo stare uruchomione joby jako błędne."""
+    now = time.time()
+    stale_before = now - IDENTIFY_JOB_STALE_RUNNING_SECONDS
+    expired_before = now - IDENTIFY_JOB_RETENTION_SECONDS
+    try:
+        init_identify_job_store()
+        with identify_job_connection() as connection:
+            connection.execute(
+                """
+                UPDATE identify_jobs
+                SET status = 'error',
+                    error = 'Zadanie zostało przerwane przed zakończeniem.',
+                    message = 'Zadanie zostało przerwane przed zakończeniem.',
+                    finished_at = ?,
+                    updated_at = ?
+                WHERE status = 'running' AND updated_at < ?
+                """,
+                (now, now, stale_before),
+            )
+            connection.execute(
+                """
+                DELETE FROM identify_jobs
+                WHERE status IN ('done', 'error', 'expired')
+                  AND COALESCE(finished_at, updated_at, created_at) < ?
+                """,
+                (expired_before,),
+            )
+    except sqlite3.Error as exc:
+        diagnostic_log(f"Nie udało się wyczyścić jobów identyfikacji: {exc}")
+
+
+def row_to_identify_job(row):
+    """Zamienia wiersz SQLite na słownik bez dużych pól roboczych."""
+    if not row:
+        return {}
+    return {
+        "id": row["id"],
+        "status": row["status"],
+        "current": row["current"] or 0,
+        "total": row["total"] or 0,
+        "message": row["message"] or "",
+        "entity": row["entity"] or "",
+        "entity_type": row["entity_type"] or "",
+        "error": row["error"] or "",
+        "model_name": row["model_name"] or DEFAULT_GEMINI_MODEL,
+        "diagnostic_log_file": row["diagnostic_log_file"] or "",
+        "result_available": bool(row["result_json"]),
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "finished_at": row["finished_at"],
+    }
+
+
+def create_identify_job(xml_payload, model_name):
+    """Zapisuje nowe zadanie identyfikacji i zwraca jego identyfikator."""
+    cleanup_identify_jobs()
+    job_id = str(uuid.uuid4())
+    now = time.time()
+    init_identify_job_store()
+    with identify_job_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO identify_jobs (
+                id, status, input_xml, model_name, current, total, message,
+                created_at, updated_at
+            )
+            VALUES (?, 'queued', ?, ?, 0, 0, ?, ?, ?)
+            """,
+            (
+                job_id,
+                xml_payload,
+                model_name,
+                "Zadanie identyfikacji czeka na rozpoczęcie.",
+                now,
+                now,
+            ),
+        )
+    ensure_identify_worker_started()
+    return job_id
+
+
+def get_identify_job(job_id, include_input=False):
+    """Pobiera metadane zadania identyfikacji."""
+    job_id = normalize_progress_id(job_id)
+    if not job_id:
+        return {}
+    init_identify_job_store()
+    with identify_job_connection() as connection:
+        row = connection.execute(
+            "SELECT * FROM identify_jobs WHERE id = ?",
+            (job_id,),
+        ).fetchone()
+    if not row:
+        return {}
+    job = row_to_identify_job(row)
+    if include_input:
+        job["input_xml"] = row["input_xml"]
+    return job
+
+
+def get_identify_job_result(job_id):
+    """Zwraca wynik zakończonego zadania identyfikacji."""
+    job_id = normalize_progress_id(job_id)
+    if not job_id:
+        return {}
+    init_identify_job_store()
+    with identify_job_connection() as connection:
+        row = connection.execute(
+            "SELECT status, result_json, error FROM identify_jobs WHERE id = ?",
+            (job_id,),
+        ).fetchone()
+    if not row:
+        return {}
+    if row["status"] != "done" or not row["result_json"]:
+        return {
+            "status": row["status"],
+            "error": row["error"] or "",
+        }
+    result = json.loads(row["result_json"])
+    result["status"] = "done"
+    return result
+
+
+def update_identify_job(job_id, **updates):
+    """Aktualizuje wybrane pola joba identyfikacji."""
+    job_id = normalize_progress_id(job_id)
+    if not job_id:
+        return
+    allowed_fields = {
+        "status",
+        "current",
+        "total",
+        "message",
+        "entity",
+        "entity_type",
+        "error",
+        "diagnostic_log_file",
+        "model_name",
+        "result_json",
+        "finished_at",
+    }
+    normalized_updates = {
+        field: value for field, value in updates.items()
+        if field in allowed_fields
+    }
+    if not normalized_updates:
+        return
+    normalized_updates["updated_at"] = time.time()
+    assignments = ", ".join(f"{field} = ?" for field in normalized_updates)
+    values = list(normalized_updates.values()) + [job_id]
+    try:
+        init_identify_job_store()
+        with identify_job_connection() as connection:
+            connection.execute(
+                f"UPDATE identify_jobs SET {assignments} WHERE id = ?",
+                values,
+            )
+    except sqlite3.Error as exc:
+        diagnostic_log(f"Nie udało się zaktualizować joba identyfikacji: {exc}")
+
+
+def claim_next_identify_job():
+    """Atomowo przejmuje najstarsze zadanie oczekujące."""
+    init_identify_job_store()
+    now = time.time()
+    connection = get_identify_job_connection()
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        row = connection.execute(
+            """
+            SELECT * FROM identify_jobs
+            WHERE status = 'queued'
+            ORDER BY created_at
+            LIMIT 1
+            """
+        ).fetchone()
+        if not row:
+            connection.commit()
+            return {}
+        connection.execute(
+            """
+            UPDATE identify_jobs
+            SET status = 'running',
+                message = ?,
+                updated_at = ?
+            WHERE id = ? AND status = 'queued'
+            """,
+            ("Rozpoczynam identyfikację encji.", now, row["id"]),
+        )
+        connection.commit()
+        job = row_to_identify_job(row)
+        job["input_xml"] = row["input_xml"]
+        return job
+    except sqlite3.Error as exc:
+        connection.rollback()
+        diagnostic_log(f"Nie udało się przejąć joba identyfikacji: {exc}")
+        return {}
+    finally:
+        connection.close()
+
+
+def run_identify_job(job):
+    """Wykonuje identyfikację encji dla zadania pobranego z kolejki SQLite."""
+    job_id = job["id"]
+    diagnostic_log_path = None
+    model_token = None
+    try:
+        diagnostic_log_path = start_diagnostic_session(log_dir="log")
+        selected_model = normalize_gemini_model_name(
+            job.get("model_name") or DEFAULT_GEMINI_MODEL
+        )
+        model_token = set_current_gemini_model(selected_model)
+        update_identify_job(
+            job_id,
+            status="running",
+            model_name=selected_model,
+            diagnostic_log_file=diagnostic_log_path,
+            message="Rozpoczynam identyfikację encji.",
+        )
+        update_progress(
+            job_id,
+            status="running",
+            current=0,
+            total=0,
+            message="Rozpoczynam identyfikację encji.",
+        )
+        diagnostic_log(f"Uruchomiono job identyfikacji {job_id}.")
+        diagnostic_log(f"Model Gemini dla joba identyfikacji: {selected_model}")
+
+        full_tei_xml, entities, unresolved_entities = identify_entities_in_tei(
+            job.get("input_xml", ""),
+            progress_id=job_id,
+        )
+        result = {
+            "xml": full_tei_xml,
+            "entities": entities,
+            "unresolved_entities": unresolved_entities,
+            "identification_performed": True,
+            "model_name": selected_model,
+            "diagnostic_log_file": diagnostic_log_path,
+        }
+        now = time.time()
+        update_identify_job(
+            job_id,
+            status="done",
+            message="Identyfikacja zakończona.",
+            result_json=json.dumps(result, ensure_ascii=False),
+            diagnostic_log_file=diagnostic_log_path,
+            finished_at=now,
+        )
+        update_progress(
+            job_id,
+            status="done",
+            message="Identyfikacja zakończona.",
+        )
+    except Exception as exc:
+        diagnostic_log(f"Błąd krytyczny w jobie identyfikacji {job_id}: {exc}")
+        update_identify_job(
+            job_id,
+            status="error",
+            error=str(exc),
+            message=str(exc),
+            diagnostic_log_file=diagnostic_log_path or "",
+            finished_at=time.time(),
+        )
+        update_progress(
+            job_id,
+            status="error",
+            message=str(exc),
+        )
+    finally:
+        reset_current_gemini_model(model_token)
+        stop_diagnostic_session()
+
+
+def identify_worker_loop():
+    """Prosta kolejka robocza dla identyfikacji encji oparta o SQLite."""
+    cleanup_identify_jobs()
+    while True:
+        job = claim_next_identify_job()
+        if job:
+            run_identify_job(job)
+            continue
+        time.sleep(IDENTIFY_WORKER_POLL_SECONDS)
+
+
+def ensure_identify_worker_started():
+    """Uruchamia lokalny wątek workerowy w bieżącym procesie aplikacji."""
+    global IDENTIFY_WORKER_STARTED
+    with IDENTIFY_WORKER_LOCK:
+        if IDENTIFY_WORKER_STARTED:
+            return
+        worker = threading.Thread(
+            target=identify_worker_loop,
+            name="text2ner-identify-worker",
+            daemon=True,
+        )
+        worker.start()
+        IDENTIFY_WORKER_STARTED = True
 
 
 def check_auth(username, password):
@@ -874,6 +1254,54 @@ def identify():
     finally:
         reset_current_gemini_model(model_token)
         stop_diagnostic_session()
+
+
+@app.route('/identify/jobs', methods=['POST'])
+@requires_auth
+def create_identify_job_route():
+    """Uruchamia identyfikację w tle i od razu zwraca identyfikator zadania."""
+    try:
+        payload = request.get_json(silent=True) or {}
+        xml_payload = payload.get('xml', '')
+        if not normalize_whitespace(xml_payload):
+            raise ValueError("Brak XML do identyfikacji.")
+        selected_model = normalize_gemini_model_name(
+            payload.get('model_name', DEFAULT_GEMINI_MODEL)
+        )
+        job_id = create_identify_job(xml_payload, selected_model)
+        return jsonify({
+            "job_id": job_id,
+            "status": "queued",
+            "message": "Zadanie identyfikacji zostało przyjęte.",
+        }), 202
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route('/identify/jobs/<job_id>', methods=['GET'])
+@requires_auth
+def get_identify_job_route(job_id):
+    """Zwraca bieżący stan zadania identyfikacji."""
+    ensure_identify_worker_started()
+    job = get_identify_job(job_id)
+    if not job:
+        return jsonify({"error": "Nie znaleziono zadania identyfikacji."}), 404
+    return jsonify(job)
+
+
+@app.route('/identify/jobs/<job_id>/result', methods=['GET'])
+@requires_auth
+def get_identify_job_result_route(job_id):
+    """Zwraca wynik zakończonego zadania identyfikacji."""
+    result = get_identify_job_result(job_id)
+    if not result:
+        return jsonify({"error": "Nie znaleziono zadania identyfikacji."}), 404
+    if result.get("status") != "done":
+        return jsonify({
+            "error": result.get("error") or "Zadanie identyfikacji nie zostało jeszcze zakończone.",
+            "status": result.get("status", "unknown"),
+        }), 409
+    return jsonify(result)
 
 
 @app.route('/identify/progress/<progress_id>', methods=['GET'])

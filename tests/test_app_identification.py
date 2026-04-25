@@ -135,5 +135,50 @@ class ProgressSessionStorageTest(unittest.TestCase):
         self.assertEqual(progress["message"], "Identyfikuję 2/5: Jan (persName)")
 
 
+class IdentifyJobStoreTest(unittest.TestCase):
+    def test_identify_job_can_be_created_and_claimed_from_sqlite(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = f"{temp_dir}/jobs.sqlite3"
+            with patch.object(app, "IDENTIFY_JOB_DB_PATH", db_path), \
+                    patch.object(app, "ensure_identify_worker_started"):
+                job_id = app.create_identify_job("<TEI><text><body /></text></TEI>", "gemini-test")
+                job = app.get_identify_job(job_id)
+
+                self.assertEqual(job["status"], "queued")
+                self.assertEqual(job["model_name"], "gemini-test")
+
+                claimed_job = app.claim_next_identify_job()
+                claimed_status = app.get_identify_job(job_id)
+
+        self.assertEqual(claimed_job["id"], job_id)
+        self.assertEqual(claimed_job["input_xml"], "<TEI><text><body /></text></TEI>")
+        self.assertEqual(claimed_status["status"], "running")
+        self.assertEqual(claimed_status["message"], "Rozpoczynam identyfikację encji.")
+
+    def test_update_progress_updates_identify_job_progress_in_sqlite(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = f"{temp_dir}/jobs.sqlite3"
+            with patch.object(app, "IDENTIFY_JOB_DB_PATH", db_path), \
+                    patch.object(app, "PROGRESS_SESSION_DIR", temp_dir), \
+                    patch.object(app, "ensure_identify_worker_started"):
+                job_id = app.create_identify_job("<TEI><text><body /></text></TEI>", "gemini-test")
+                app.update_progress(
+                    job_id,
+                    status="running",
+                    current=3,
+                    total=7,
+                    message="Identyfikuję 3/7: Kraków (placeName)",
+                    entity="Kraków",
+                    entity_type="placeName",
+                )
+                job = app.get_identify_job(job_id)
+
+        self.assertEqual(job["status"], "running")
+        self.assertEqual(job["current"], 3)
+        self.assertEqual(job["total"], 7)
+        self.assertEqual(job["entity"], "Kraków")
+        self.assertEqual(job["entity_type"], "placeName")
+
+
 if __name__ == "__main__":
     unittest.main()
