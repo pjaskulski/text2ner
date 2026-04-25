@@ -464,12 +464,12 @@ def build_preview_pdf_html(xml_payload, entities=None, unresolved_entities=None,
 <html lang="pl">
 <head>
   <meta charset="UTF-8">
-  <title>TEXT2NER - podgląd tekstu</title>
+  <title>TEXT2NER - analiza tekstu</title>
   <style>{PDF_PREVIEW_STYLES}</style>
 </head>
 <body>
   <header>
-    <h1>TEXT2NER - podgląd tekstu</h1>
+    <h1>TEXT2NER - analiza tekstu</h1>
   </header>
   {render_pdf_legend()}
   <main>{preview_html}</main>

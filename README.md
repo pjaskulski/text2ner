@@ -22,7 +22,8 @@ W praktyce oznacza to, że z nieopracowanego tekstu źródłowego powstaje:
 - TEI-XML z tagami `persName`, `placeName`, `orgName`, `date` i `roleName`,
 - lista encji z rozstrzygniętym odnośnikiem `ref`,
 - lista encji, których nie udało się wiarygodnie powiązać z rekordem referencyjnym,
-- log diagnostyczny bieżącego przebiegu rozpoznawania albo identyfikacji.
+- log diagnostyczny bieżącego przebiegu rozpoznawania albo identyfikacji,
+- kolorowy podgląd tekstu możliwy do wyeksportowania do pliku PDF.
 
 Interfejs WWW udostępnia obecnie także dwa dodatkowe obszary konfiguracji:
 
@@ -123,6 +124,7 @@ Po rozpoznaniu aplikacja pokazuje:
 - kod XML,
 - podgląd tekstu z kolorowaniem tagów,
 - przycisk pobrania XML,
+- przycisk eksportu kolorowego podglądu do PDF,
 - przycisk pobrania pełnego logu diagnostycznego.
 
 Przed identyfikacją użytkownik może ręcznie poprawić wynik rozpoznania w widoku podglądu:
@@ -133,17 +135,48 @@ Przed identyfikacją użytkownik może ręcznie poprawić wynik rozpoznania w wi
 
 Dzięki temu identyfikacja może być uruchamiana już na poprawionym przez użytkownika TEI-XML.
 
+### 3a. Eksport podglądu do PDF
+
+Przycisk `PDF` generuje plik `text2ner_preview.pdf` na podstawie aktualnego XML-a widocznego w interfejsie, a nie na podstawie pierwotnego tekstu wejściowego. Oznacza to, że eksport uwzględnia:
+
+- wynik rozpoznania encji,
+- ręczne korekty tagów wykonane w podglądzie,
+- a po identyfikacji także aktualne listy encji zidentyfikowanych i niezidentyfikowanych.
+
+PDF zawiera kolorowy podgląd tekstu z legendą oznaczeń dla tagów oraz, jeśli etap identyfikacji został wykonany, osobne sekcje `Zidentyfikowane encje` i `Niezidentyfikowane encje`. Generowanie PDF odbywa się po stronie serwera w endpointcie `/preview-pdf` z użyciem biblioteki `WeasyPrint`.
+
 ### 4. Identyfikacja encji
 
 Identyfikacja rozpoczyna się, kiedy użytkownik wybierze przycisk `Identyfikuj encje`.
 
 Ten etap dotyczy tylko tagów `persName` i `placeName`. Tagi `date`, `roleName` i `orgName` nie są linkowane do zewnętrznych baz referencyjnych.
 
-Na wejściu etapu identyfikacji aplikacja:
+Identyfikacja w interfejsie WWW działa obecnie jako zadanie w tle. Frontend wysyła aktualny XML do endpointu `/identify/jobs`, a aplikacja:
 
-- wprowadza informację do plik logu diagnostycznego,
+- zapisuje zadanie w lokalnej bazie SQLite,
+- zwraca identyfikator zadania,
+- uruchamia lokalny wątek roboczy, jeśli nie został jeszcze uruchomiony,
+- cyklicznie udostępnia status przez `/identify/jobs/<job_id>`,
+- po zakończeniu zwraca pełny wynik przez `/identify/jobs/<job_id>/result`.
+
+Aplikacja korzysta więc z kolejki zadań, dzięki temu długie identyfikacje nie muszą trzymać jednego żądania HTTP otwartego przez cały czas pracy modelu i zapytań do baz referencyjnych.
+
+Na wejściu właściwego etapu identyfikacji aplikacja:
+
+- wprowadza informację do pliku logu diagnostycznego,
 - wyciąga zawartość sekcji `<body>` z TEI-XML,
 - wykrywa daty obecne w całym dokumencie, które mogą być przydatne przy weryfikacji kandydatów z baz referencyjnych dla tagów persName (osób), chronologia obecna w dokumencie może pomóc w odrzuceniu kandydatów z innych epok.
+
+### 4a. Pasek postępu identyfikacji
+
+Podczas identyfikacji interfejs pokazuje pasek postępu z komunikatem tekstowym i licznikiem `bieżąca encja / liczba encji`. Postęp obejmuje między innymi stany:
+
+- przyjęcie zadania do kolejki,
+- rozpoczęcie identyfikacji,
+- wykrycie liczby tagów `persName` i `placeName`,
+- bieżąco przetwarzaną encję,
+- składanie końcowego TEI-XML,
+- zakończenie albo błąd.
 
 ### 5. Iteracja po encjach i cache w obrębie dokumentu
 
@@ -153,7 +186,7 @@ Dla każdego znacznika `persName` i `placeName` aplikacja:
 - ustala najbliższy kontekst tekstowy,
 - sprawdza podręczny cache wyników dla bieżącego dokumentu.
 
-Jeżeli ta sama encja została już wcześniej skutecznie rozpoznana w danym XML-u, wynik jest używany ponownie bez powtarzania pełnej procedury identyfikacyjnej.
+Jeżeli ta sama encja została już wcześniej skutecznie rozpoznana w danym XML-u w tym samym typie tagu i w tym samym kontekście tekstowym, wynik jest używany ponownie bez powtarzania pełnej procedury identyfikacyjnej. Cache jest więc kontekstowy: ta sama forma powierzchniowa może zostać sprawdzona ponownie, jeśli występuje w innym otoczeniu i może oznaczać inną osobę albo inne miejsce.
 
 ### 6. Analiza formy encji
 
@@ -161,7 +194,7 @@ Jeżeli encja nie została jeszcze rozpoznana, uruchamiany jest pipeline `link_e
 
 Najpierw Gemini przygotowuje pomocniczą analizę formy, obejmującą między innymi:
 
-- ostrożnie znormalizowaną formę `normalized_best`,
+- znormalizowaną formę `normalized_best`,
 - warianty lematyczne i powierzchniowe,
 - rozpoznane urzędy lub funkcje,
 - wskazówki kontekstowe (lokalizacyjne, relacyjne, dotyczące np. funkcji osób)
@@ -241,6 +274,28 @@ Projekt korzysta z bibliotek wymienionych w `requirements.txt`, w tym:
 - `python-dotenv`
 - `requests`
 - `lxml`
+- `weasyprint`
+
+`WeasyPrint` jest wymagany do eksportu kolorowego podglądu do PDF. W części środowisk oprócz pakietu Pythona mogą być potrzebne także jego zależności systemowe odpowiedzialne za renderowanie HTML/CSS do PDF.
+
+## Architektura identyfikacji i postępu
+
+Nowsza wersja procesu identyfikacji rozdziela rozpoczęcie zadania, monitorowanie postępu i pobranie wyniku:
+
+- `/identify/jobs` przyjmuje XML i tworzy zadanie identyfikacji w SQLite,
+- wątek `text2ner-identify-worker` pobiera najstarsze oczekujące zadanie i wykonuje `identify_entities_in_tei(...)`,
+- `/identify/jobs/<job_id>` zwraca status, licznik postępu, komunikat i aktualnie przetwarzaną encję,
+- `/identify/jobs/<job_id>/result` zwraca wynik dopiero po zakończeniu zadania,
+- `/identify/progress/<progress_id>` pozostaje endpointem do odczytu stanu postępu zapisywanego przez `update_progress(...)`,
+- `/identify` pozostaje dostępne dla zgodności wstecznej jako identyfikacja synchroniczna.
+
+Domyślne ścieżki i czasy przechowywania można zmienić zmiennymi środowiskowymi:
+
+- `TEXT2NER_PROGRESS_SESSION_DIR` - katalog plików JSON ze stanem postępu, domyślnie `/tmp/text2ner_progress`,
+- `TEXT2NER_IDENTIFY_JOB_DB_PATH` - ścieżka bazy SQLite z kolejką identyfikacji, domyślnie `/tmp/text2ner_identify_jobs.sqlite3`,
+- `TEXT2NER_IDENTIFY_JOB_RETENTION_SECONDS` - czas przechowywania zakończonych zadań, domyślnie 48 godzin,
+- `TEXT2NER_IDENTIFY_JOB_STALE_RUNNING_SECONDS` - czas po którym niedokończone zadanie `running` uznawane jest za przerwane, domyślnie 1 godzina,
+- `TEXT2NER_IDENTIFY_WORKER_POLL_SECONDS` - odstęp odpytywania kolejki przez worker, domyślnie 1 sekunda.
 
 ## Ograniczenia i uwagi
 
@@ -248,6 +303,7 @@ Projekt korzysta z bibliotek wymienionych w `requirements.txt`, w tym:
 - Aplikacja działa najlepiej na tekstach historycznych z wyraźnymi nazwami osób i miejsc.
 - Rozstrzyganie encji ma charakter wspomagający, nie gwarantuje pełnej poprawności naukowej i powinno być traktowane jako etap roboczy redakcji cyfrowej.
 - W kodzie istnieje semantyczny fallback SPARQL do Wikidaty, ale jest obecnie wyłączony ze względu na problemy z wydajnością zapytań.
+- Eksport PDF zależy od poprawnej instalacji `WeasyPrint` i jego zależności systemowych.
 
 ## Konfiguracja słowników
 
