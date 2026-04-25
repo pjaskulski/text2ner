@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from bs4 import BeautifulSoup
 
@@ -72,6 +73,61 @@ class AugustinoIdentificationSignalsTest(unittest.TestCase):
         self.assertIn("Petrus Strelicz", queries)
         self.assertIn("Piotr Strelicz", queries)
         self.assertIn("Strelicz", queries)
+
+    def test_wikidata_candidate_collection_limits_search_queries(self):
+        entity_analysis = {
+            "surface": "Augustino",
+            "tag_type": "persName",
+            "normalized_best": "Augustinus",
+            "lemma_candidates": ["Augustinus"],
+            "surface_variants": ["Augustino"],
+            "office_terms": ["episcopus Perusinus", "thesaurarius domini pape"],
+            "place_terms": ["Perusia"],
+        }
+        seen_queries = []
+
+        def fake_search(query, tag_type, source_config):
+            seen_queries.append(query)
+            return []
+
+        original_limit = names_linking.WIKIDATA_MAX_SEARCH_QUERIES
+        names_linking.WIKIDATA_MAX_SEARCH_QUERIES = 3
+        try:
+            with patch.object(names_linking, "search_source_candidates", side_effect=fake_search):
+                names_linking.collect_candidates_from_sources(
+                    entity_analysis,
+                    "persName",
+                    ("Wikidata",),
+                )
+        finally:
+            names_linking.WIKIDATA_MAX_SEARCH_QUERIES = original_limit
+
+        self.assertEqual(len(seen_queries), 3)
+
+    def test_wikidata_candidate_collection_stops_after_rate_limit(self):
+        entity_analysis = {
+            "surface": "Augustino",
+            "tag_type": "persName",
+            "normalized_best": "Augustinus",
+            "lemma_candidates": ["Augustinus"],
+            "surface_variants": ["Augustino"],
+            "office_terms": [],
+            "place_terms": [],
+        }
+        seen_queries = []
+
+        def fake_search(query, tag_type, source_config):
+            seen_queries.append(query)
+            raise names_linking.WikidataRateLimitError("HTTP 429")
+
+        with patch.object(names_linking, "search_source_candidates", side_effect=fake_search):
+            names_linking.collect_candidates_from_sources(
+                entity_analysis,
+                "persName",
+                ("Wikidata",),
+            )
+
+        self.assertEqual(len(seen_queries), 1)
 
     def test_candidate_with_papal_treasurer_signal_ranks_above_generic_bishop(self):
         entity_analysis = {

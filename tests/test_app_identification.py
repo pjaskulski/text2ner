@@ -57,5 +57,60 @@ class IdentifyEntitiesCacheTest(unittest.TestCase):
         self.assertEqual(unresolved, [])
 
 
+class PreviewPdfHtmlTest(unittest.TestCase):
+    def test_build_preview_pdf_html_keeps_entity_color_classes(self):
+        xml = """
+        <TEI>
+          <text>
+            <body>
+              <p><persName>Jan</persName> był w <placeName>Krakowie</placeName>.</p>
+            </body>
+          </text>
+        </TEI>
+        """
+
+        html = app.build_preview_pdf_html(xml)
+
+        self.assertIn('class="tei-tag entity-pers"', html)
+        self.assertIn('class="tei-tag entity-place"', html)
+        self.assertIn('class="entity-label entity-pers"', html)
+        self.assertIn("Legenda oznaczeń", html)
+        self.assertIn("<p>", html)
+
+    def test_build_preview_pdf_html_adds_identification_sections(self):
+        xml = """
+        <TEI>
+          <text>
+            <body>
+              <p><persName ref="https://example.test/Q1">Jan</persName> spotkał <persName>Piotra</persName>.</p>
+            </body>
+          </text>
+        </TEI>
+        """
+
+        html = app.build_preview_pdf_html(
+            xml,
+            entities=[{
+                "name": "Jan",
+                "surface": "Jan",
+                "type": "persName",
+                "url": "https://example.test/Q1",
+            }],
+            unresolved_entities=[{
+                "name": "Piotr",
+                "surface": "Piotra",
+                "type": "persName",
+                "reason": "no_candidates",
+            }],
+            identification_performed=True,
+        )
+
+        self.assertIn("Zidentyfikowane encje", html)
+        self.assertIn("Niezidentyfikowane encje", html)
+        self.assertIn('class="entity-url"', html)
+        self.assertIn("https://example.test/Q1", html)
+        self.assertIn("no_candidates", html)
+
+
 if __name__ == "__main__":
     unittest.main()

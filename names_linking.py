@@ -38,13 +38,19 @@ CURRENT_GEMINI_MODEL = ContextVar("CURRENT_GEMINI_MODEL", default=DEFAULT_GEMINI
 DIAGNOSTIC_LOG_RETENTION_HOURS = 48
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_DIR = os.path.join(BASE_DIR, "config")
-WIKIDATA_REQUEST_INTERVAL_SECONDS = float(os.environ.get("WIKIDATA_REQUEST_INTERVAL_SECONDS", "0.75"))
+WIKIDATA_REQUEST_INTERVAL_SECONDS = float(os.environ.get("WIKIDATA_REQUEST_INTERVAL_SECONDS", "2.0"))
+WIKIDATA_MAX_SEARCH_QUERIES = int(os.environ.get("WIKIDATA_MAX_SEARCH_QUERIES", "12"))
 WIKIDATA_429_MAX_RETRIES = int(os.environ.get("WIKIDATA_429_MAX_RETRIES", "2"))
 WIKIDATA_429_DEFAULT_WAIT_SECONDS = int(os.environ.get("WIKIDATA_429_DEFAULT_WAIT_SECONDS", "60"))
-WIKIDATA_429_MAX_WAIT_SECONDS = int(os.environ.get("WIKIDATA_429_MAX_WAIT_SECONDS", "120"))
+WIKIDATA_429_MAX_WAIT_SECONDS = int(os.environ.get("WIKIDATA_429_MAX_WAIT_SECONDS", "300"))
+WIKIDATA_429_COOLDOWN_SECONDS = int(os.environ.get("WIKIDATA_429_COOLDOWN_SECONDS", "600"))
 WIKIDATA_THROTTLE_STATE_PATH = os.environ.get(
     "WIKIDATA_THROTTLE_STATE_PATH",
     "/tmp/text2ner_wikidata_throttle.state",
+)
+WIKIDATA_COOLDOWN_STATE_PATH = os.environ.get(
+    "WIKIDATA_COOLDOWN_STATE_PATH",
+    "/tmp/text2ner_wikidata_cooldown.state",
 )
 _WIKIDATA_THROTTLE_LOCK = threading.Lock()
 _LAST_WIKIDATA_REQUEST_AT = 0.0
@@ -669,13 +675,49 @@ SEMANTIC_FALLBACK_OFFICE_FAMILIES = {
 
 
 # -------------------------------- HELPERS ------------------------------------
+class WikidataRateLimitError(ValueError):
+    """Sygnał, że Wikidata zwróciła HTTP 429 i trzeba przerwać dalsze zapytania."""
+
+
 def is_wikidata_url(url):
     """Sprawdza, czy żądanie trafia do publicznych usług Wikidaty."""
     return "wikidata.org" in normalize_whitespace(url).lower()
 
 
+def get_wikidata_cooldown_remaining_seconds():
+    """Zwraca liczbę sekund pozostałych do końca globalnego cooldownu Wikidaty."""
+    try:
+        with open(WIKIDATA_COOLDOWN_STATE_PATH, "r", encoding="utf-8") as cooldown_file:
+            raw_value = cooldown_file.read().strip()
+        cooldown_until = float(raw_value) if raw_value else 0.0
+    except Exception:
+        return 0
+    remaining = int(cooldown_until - time.time())
+    return max(0, remaining)
+
+
+def set_wikidata_cooldown(wait_seconds):
+    """Ustawia globalny cooldown Wikidaty współdzielony między workerami."""
+    wait_seconds = max(int(wait_seconds or 0), WIKIDATA_429_COOLDOWN_SECONDS)
+    cooldown_until = time.time() + wait_seconds
+    try:
+        with open(WIKIDATA_COOLDOWN_STATE_PATH, "w", encoding="utf-8") as cooldown_file:
+            cooldown_file.write(str(cooldown_until))
+    except Exception:
+        pass
+    diagnostic_log(
+        f"Ustawiono globalny cooldown Wikidaty na {wait_seconds}s po HTTP 429."
+    )
+
+
 def throttle_wikidata_request():
     """Ogranicza tempo zapytań do Wikidaty także między workerami aplikacji."""
+    cooldown_remaining = get_wikidata_cooldown_remaining_seconds()
+    if cooldown_remaining > 0:
+        raise WikidataRateLimitError(
+            f"Wikidata jest w cooldownie po HTTP 429; pomijam zapytania przez {cooldown_remaining}s."
+        )
+
     if WIKIDATA_REQUEST_INTERVAL_SECONDS <= 0:
         return
 
@@ -745,6 +787,14 @@ def get_json_response(url, params, headers, source_label):
         time.sleep(retry_after)
 
     content_type = response.headers.get("Content-Type", "")
+    if wikidata_request and response.status_code == 429:
+        retry_after = parse_retry_after_seconds(response.headers.get("Retry-After"))
+        retry_after = max(1, min(retry_after, WIKIDATA_429_MAX_WAIT_SECONDS))
+        set_wikidata_cooldown(retry_after)
+        preview = response.text[:200].replace("\n", " ")
+        raise WikidataRateLimitError(
+            f"HTTP 429 dla {source_label}; content-type={content_type}; body={preview}"
+        )
     if response.status_code >= 400:
         preview = response.text[:200].replace("\n", " ")
         raise ValueError(
@@ -3971,9 +4021,23 @@ def collect_candidates_from_sources(entity_analysis, tag_type, source_names):
     collected_candidates = []
     for source_name in source_names:
         source_config = WIKIBASE_SOURCES[source_name]
-        for query in queries:
+        source_queries = queries
+        if source_name == "Wikidata" and WIKIDATA_MAX_SEARCH_QUERIES > 0:
+            source_queries = queries[:WIKIDATA_MAX_SEARCH_QUERIES]
+            if len(source_queries) < len(queries):
+                diagnostic_log(
+                    f"Ograniczono plan zapytań Wikidata dla '{entity_analysis['surface']}' "
+                    f"({tag_type}) do {len(source_queries)} z {len(queries)} zapytań."
+                )
+        for query in source_queries:
             try:
                 collected_candidates.extend(search_source_candidates(query, tag_type, source_config))
+            except WikidataRateLimitError as exc:
+                diagnostic_log(
+                    f"Przerywam zapytania Wikidata dla '{entity_analysis['surface']}' "
+                    f"({tag_type}) po rate limit: {exc}"
+                )
+                break
             except Exception as exc:
                 print(f"Błąd wyszukiwania {source_name} dla '{query}': {exc}")
     return order_candidates_for_review(dedupe_candidates(collected_candidates), entity_analysis)
