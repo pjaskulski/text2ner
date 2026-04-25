@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import time
@@ -45,6 +46,10 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 PROGRESS_SESSIONS = {}
 PROGRESS_LOCK = threading.Lock()
 PROGRESS_RETENTION_SECONDS = 30 * 60
+PROGRESS_SESSION_DIR = os.environ.get(
+    "TEXT2NER_PROGRESS_SESSION_DIR",
+    "/tmp/text2ner_progress",
+)
 
 # szablon nagłówka dokumentu TEI
 TEI_HEADER = """<?xml version="1.0" encoding="UTF-8"?>
@@ -472,7 +477,7 @@ def render_preview_pdf_bytes(xml_payload, entities=None, unresolved_entities=Non
 
 
 def purge_expired_progress_sessions():
-    """Czyści stare wpisy postępu, żeby słownik w pamięci nie rósł bez końca."""
+    """Czyści stare wpisy postępu, żeby pamięć i katalog stanu nie rosły bez końca."""
     cutoff = time.time() - PROGRESS_RETENTION_SECONDS
     with PROGRESS_LOCK:
         expired_ids = [
@@ -481,10 +486,67 @@ def purge_expired_progress_sessions():
         ]
         for progress_id in expired_ids:
             PROGRESS_SESSIONS.pop(progress_id, None)
+    try:
+        os.makedirs(PROGRESS_SESSION_DIR, exist_ok=True)
+        for filename in os.listdir(PROGRESS_SESSION_DIR):
+            if not filename.endswith(".json"):
+                continue
+            progress_path = os.path.join(PROGRESS_SESSION_DIR, filename)
+            if os.path.getmtime(progress_path) < cutoff:
+                os.remove(progress_path)
+    except OSError as exc:
+        diagnostic_log(f"Nie udało się wyczyścić plików postępu: {exc}")
+
+
+def normalize_progress_id(progress_id):
+    """Dopuszcza wyłącznie bezpieczne identyfikatory postępu generowane przez frontend."""
+    progress_id = normalize_whitespace(progress_id)
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,120}", progress_id):
+        return ""
+    return progress_id
+
+
+def get_progress_session_path(progress_id):
+    """Zwraca ścieżkę pliku stanu dla danego identyfikatora postępu."""
+    safe_progress_id = normalize_progress_id(progress_id)
+    if not safe_progress_id:
+        return ""
+    return os.path.join(PROGRESS_SESSION_DIR, f"{safe_progress_id}.json")
+
+
+def write_progress_session_file(progress_id, progress_data):
+    """Zapisuje stan postępu tak, aby był widoczny dla wielu workerów WSGI."""
+    progress_path = get_progress_session_path(progress_id)
+    if not progress_path:
+        return
+    try:
+        os.makedirs(PROGRESS_SESSION_DIR, exist_ok=True)
+        tmp_path = f"{progress_path}.{os.getpid()}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as progress_file:
+            json.dump(progress_data, progress_file, ensure_ascii=False)
+        os.replace(tmp_path, progress_path)
+    except OSError as exc:
+        diagnostic_log(f"Nie udało się zapisać pliku postępu: {exc}")
+
+
+def read_progress_session_file(progress_id):
+    """Czyta współdzielony stan postępu zapisany przez dowolny worker."""
+    progress_path = get_progress_session_path(progress_id)
+    if not progress_path or not os.path.isfile(progress_path):
+        return {}
+    try:
+        with open(progress_path, "r", encoding="utf-8") as progress_file:
+            progress_data = json.load(progress_file)
+        if isinstance(progress_data, dict):
+            return progress_data
+    except (OSError, json.JSONDecodeError) as exc:
+        diagnostic_log(f"Nie udało się odczytać pliku postępu: {exc}")
+    return {}
 
 
 def update_progress(progress_id, **updates):
     """Aktualizuje stan długiej operacji widoczny dla frontendu."""
+    progress_id = normalize_progress_id(progress_id)
     if not progress_id:
         return
     now = time.time()
@@ -493,13 +555,21 @@ def update_progress(progress_id, **updates):
         current.update(updates)
         current["updated_at"] = now
         PROGRESS_SESSIONS[progress_id] = current
+        progress_snapshot = dict(current)
+    write_progress_session_file(progress_id, progress_snapshot)
 
 
 def get_progress(progress_id):
     """Zwraca kopię stanu postępu dla wskazanego identyfikatora."""
+    progress_id = normalize_progress_id(progress_id)
+    if not progress_id:
+        return {}
     purge_expired_progress_sessions()
     with PROGRESS_LOCK:
-        return dict(PROGRESS_SESSIONS.get(progress_id, {}))
+        progress = dict(PROGRESS_SESSIONS.get(progress_id, {}))
+    if progress:
+        return progress
+    return read_progress_session_file(progress_id)
 
 
 def check_auth(username, password):

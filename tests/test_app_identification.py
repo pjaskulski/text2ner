@@ -1,4 +1,5 @@
 import unittest
+import tempfile
 from unittest.mock import patch
 
 from bs4 import BeautifulSoup
@@ -110,6 +111,28 @@ class PreviewPdfHtmlTest(unittest.TestCase):
         self.assertIn('class="entity-url"', html)
         self.assertIn("https://example.test/Q1", html)
         self.assertIn("no_candidates", html)
+
+
+class ProgressSessionStorageTest(unittest.TestCase):
+    def test_progress_is_available_after_memory_cache_is_cleared(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.object(app, "PROGRESS_SESSION_DIR", temp_dir):
+                app.PROGRESS_SESSIONS.clear()
+                app.update_progress(
+                    "progress-test-1",
+                    status="running",
+                    current=2,
+                    total=5,
+                    message="Identyfikuję 2/5: Jan (persName)",
+                )
+                app.PROGRESS_SESSIONS.clear()
+
+                progress = app.get_progress("progress-test-1")
+
+        self.assertEqual(progress["status"], "running")
+        self.assertEqual(progress["current"], 2)
+        self.assertEqual(progress["total"], 5)
+        self.assertEqual(progress["message"], "Identyfikuję 2/5: Jan (persName)")
 
 
 if __name__ == "__main__":
