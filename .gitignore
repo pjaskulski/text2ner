@@ -209,4 +209,4 @@ __marimo__/
 prompty.txt
 opis.txt
 .codex
-jobs/*.sqlite
+jobs/*.sqlite3
