@@ -34,13 +34,16 @@ digraph text2ner_process_simple {
     recognize [label="3. Funkcja Rozpoznaj encje\nAplikacja tworzy TEI-XML\ni oznacza osoby, miejsca,\ndaty, funkcje i instytucje (tagi zależnie od ustawień)"];
     preview [label="4. Podgląd wyniku\nUżytkownik ogląda XML\nlub kolorowany podgląd tekstu"];
     manual [label="5. Opcjonalna korekta ręczna\nMożna usunąć tag,\nzmienić jego typ albo dodać nowy"];
-    identify [label="6. Identyfikacja encji\nAplikacja próbuje powiązać\nosoby (persName) i miejsca (placeName)\nz rekordami baz referencyjnych"];
-    sources [label="7. Wyszukiwanie kandydatów\nw WikiHum, va.wiki.kul.pl,\njeżeli nieskuteczna -> Wikidata i w polskiej Wikipedii"];
-    decision [label="8. Ocena kandydatów\nModel Gemini porównuje kontekst,\nwarianty nazwy (dla osób\nrównież zgodność chronologiczną)"];
-    result [label="9. Wynik końcowy\nTEI-XML z wyróżnieniem osób, miejsc i ich indetyfikacją", fillcolor="#DCFCE7", color="#16A34A"];
-    lists [label="10. Dodatkowe wyniki:\nLista encji (osób i miejsc) zidentyfikowanych\ni niezidentyfikowanych"];
-    log [label="11. Log diagnostyczny\nMożna pobrać pełny log\nlub obejrzeć fragment\ndla konkretnej encji", fillcolor="#FEF3C7", color="#D97706"];
+    pdf_before [label="6. Eksport PDF podglądu\nMożna pobrać kolorowy podgląd\naktualnego tekstu i oznaczeń", fillcolor="#FEF3C7", color="#D97706"];
+    identify [label="7. Identyfikacja encji jako zadanie w tle\nAplikacja przyjmuje XML do kolejki\ni pokazuje pasek postępu"];
+    sources [label="8. Wyszukiwanie kandydatów\nw WikiHum, va.wiki.kul.pl,\njeżeli nieskuteczna -> Wikidata i w polskiej Wikipedii"];
+    decision [label="9. Ocena kandydatów\nModel Gemini porównuje kontekst,\nwarianty nazwy (dla osób\nrównież zgodność chronologiczną)"];
+    result [label="10. Wynik końcowy\nTEI-XML z wyróżnieniem osób, miejsc i ich identyfikacją", fillcolor="#DCFCE7", color="#16A34A"];
+    lists [label="11. Dodatkowe wyniki:\nLista encji (osób i miejsc) zidentyfikowanych\ni niezidentyfikowanych"];
+    pdf_after [label="12. Eksport PDF po identyfikacji\nPodgląd zawiera także listy encji"];
+    log [label="13. Log diagnostyczny\nMożna pobrać pełny log\nlub obejrzeć fragment\ndla konkretnej encji", fillcolor="#FEF3C7", color="#D97706"];
 
-    start -> settings -> recognize -> preview -> manual -> identify -> sources -> decision -> result -> lists -> log;
+    start -> settings -> recognize -> preview -> manual -> pdf_before -> identify -> sources -> decision -> result -> lists -> pdf_after -> log;
     preview -> identify [label="jeśli nie ma korekty"];
+    preview -> pdf_before [label="PDF bez identyfikacji"];
 }

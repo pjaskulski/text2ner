@@ -56,6 +56,7 @@ digraph text2ner_process {
 
         preview_xml [label="Widok XML oraz podgląd tekstu\nz kolorowaniem tagów"];
         manual_edit [label="Opcjonalna korekta ręczna:\nusuń tag / zmień typ / dodaj tag"];
+        export_pdf [label="Opcjonalny eksport PDF:\nPOST /preview-pdf\nkolorowy podgląd + legenda\n+ listy encji po identyfikacji", fillcolor="#FEF3C7", color="#D97706"];
         run_identify [shape=diamond, label="Czy uruchomić\nIdentyfikuj encje?"];
         keep_only_tei [label="Koniec po etapie 1:\nTEI-XML z tagami,\nbez ref dla persName/placeName", fillcolor="#E0F2FE", color="#0284C7"];
     }
@@ -65,14 +66,20 @@ digraph text2ner_process {
         color="#CBD5E1";
         style="rounded";
 
-        post_identify [label="POST /identify"];
+        post_identify_job [label="POST /identify/jobs"];
+        create_job [label="create_identify_job:\nzapis zadania w SQLite\nstatus=queued\nmodel_name + input_xml"];
+        ensure_worker [label="ensure_identify_worker_started:\nwątek text2ner-identify-worker"];
+        job_status [label="Frontend odpytuje:\nGET /identify/jobs/<job_id>\nstatus + current/total + message"];
+        claim_job [label="claim_next_identify_job:\natomowe przejęcie\nnajstarszego queued"];
         start_log_identify [label="start_diagnostic_session:\nusuń logi starsze niż 48 h\nutwórz nowy plik logu"];
         identify_input [label="Identyfikacja w istniejącym TEI:\nextract_inner_xml\n+ model_name"];
         extract_doc_years [label="Wykrycie lat dokumentu\nz całego XML / tekstu"];
+        progress_start [label="update_progress:\nstatus=running\nstart identyfikacji"];
         entity_loop [label="Pętla po tagach\npersName i placeName"];
+        progress_entity [label="update_progress:\nbieżąca encja\ncurrent/total/message\nplik JSON + SQLite"];
         entity_context [label="Pobranie surface form\ni kontekstu encji"];
-        cache_check [shape=diamond, label="Czy encja została już\nskutecznie rozstrzygnięta\nw tym dokumencie?"];
-        cache_hit [label="Użycie wyniku z cache\n(key/ref bez ponownej analizy)"];
+        cache_check [shape=diamond, label="Czy encja została już\nskutecznie rozstrzygnięta\nw tym samym kontekście?"];
+        cache_hit [label="Użycie wyniku z cache\nkontekstowego\n(key/ref bez ponownej analizy)"];
         link_entity [label="link_entity(...)", fillcolor="#F1F5F9", color="#64748B"];
 
         analyze_form [label="Gemini:\nanalyze_form_with_gemini"];
@@ -106,7 +113,8 @@ digraph text2ner_process {
         next_entity [shape=diamond, label="Czy są kolejne\nencje do identyfikacji?"];
         build_final_tei [label="serialize_inner_xml\n+ build_full_tei_xml"];
         sort_outputs [label="Sortowanie lists:\nentities\nunresolved_entities"];
-        identify_response [label="JSON /identify:\nxml\nentities\nunresolved_entities\nidentification_performed=true\ndiagnostic_log_file", fillcolor="#E0F2FE", color="#0284C7"];
+        finish_job [label="Zapis wyniku zadania:\nstatus=done\nresult_json\ndiagnostic_log_file", fillcolor="#DCFCE7", color="#16A34A"];
+        identify_response [label="GET /identify/jobs/<job_id>/result:\nxml\nentities\nunresolved_entities\nidentification_performed=true\ndiagnostic_log_file", fillcolor="#E0F2FE", color="#0284C7"];
         ui_output [label="UI: kod XML, podgląd tekstu,\nlista encji, przyciski logu,\npobieranie XML/logu", fillcolor="#E0F2FE", color="#0284C7"];
     }
 
@@ -120,13 +128,16 @@ digraph text2ner_process {
 
     tei_without_ids -> recognize_response [label="/recognize"];
     recognize_response -> preview_xml -> manual_edit -> run_identify;
+    preview_xml -> export_pdf [label="PDF przed identyfikacją"];
+    ui_output -> export_pdf [label="PDF po identyfikacji"];
     run_identify -> keep_only_tei [label="nie"];
-    run_identify -> post_identify [label="tak"];
+    run_identify -> post_identify_job [label="tak"];
 
-    post_identify -> start_log_identify -> identify_input;
+    post_identify_job -> create_job -> ensure_worker -> job_status;
+    ensure_worker -> claim_job -> start_log_identify -> progress_start -> identify_input;
     tei_without_ids -> identify_input [label="XML po rozpoznaniu"];
 
-    identify_input -> extract_doc_years -> entity_loop -> entity_context -> cache_check;
+    identify_input -> extract_doc_years -> entity_loop -> progress_entity -> entity_context -> cache_check;
     cache_check -> cache_hit [label="tak"];
     cache_check -> link_entity [label="nie"];
 
@@ -150,5 +161,5 @@ digraph text2ner_process {
     next_entity -> entity_loop [label="tak"];
     next_entity -> build_final_tei [label="nie"];
 
-    build_final_tei -> sort_outputs -> identify_response -> ui_output;
+    build_final_tei -> sort_outputs -> finish_job -> identify_response -> ui_output;
 }

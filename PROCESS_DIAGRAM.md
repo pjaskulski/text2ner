@@ -15,15 +15,18 @@ Diagram procesu przetwarzania w projekcie `text2ner` jest utrzymywany w Graphviz
 
 Diagram obejmuje pełny przebieg przetwarzania:
 
-- standardowy workflow `POST /recognize` -> podgląd / opcjonalna korekta -> `POST /identify`,
+- standardowy workflow `POST /recognize` -> podgląd / opcjonalna korekta -> zadanie identyfikacji przez `POST /identify/jobs`,
 - tworzenie logu diagnostycznego i automatyczne czyszczenie logów starszych niż 48 godzin,
 - dwuprzebiegowe tagowanie encji przez Gemini z uwzględnieniem wybranych typów tagów,
+- kolejkę identyfikacji w SQLite, workera `text2ner-identify-worker`, endpointy statusu i pobierania wyniku,
+- pasek postępu identyfikacji oparty o `update_progress(...)`, pliki JSON i rekord zadania SQLite,
 - iterację po encjach `persName` i `placeName` podczas identyfikacji,
 - analizę formy encji, budowę planu zapytań i wybór kandydata przez Gemini,
 - wyszukiwanie kandydatów w `WikiHum`, `va.wiki.kul.pl`, `Wikidata` oraz fallback przez polską Wikipedię dla części encji osobowych,
-- złożenie końcowego TEI-XML, list encji oraz odpowiedzi JSON zwracanej do interfejsu.
+- złożenie końcowego TEI-XML, list encji oraz odpowiedzi JSON zwracanej do interfejsu,
+- eksport kolorowego podglądu do PDF przez `POST /preview-pdf`.
 
-Równolegle utrzymywana jest także wersja uproszczona diagramu, przeznaczona bardziej dla historyków i użytkowników końcowych niż dla programistów. Pokazuje ona główne etapy pracy z aplikacją bez wchodzenia w szczegóły implementacyjne.
+Równolegle utrzymywana jest także wersja uproszczona diagramu, przeznaczona bardziej dla historyków i użytkowników końcowych niż dla programistów. Pokazuje ona główne etapy pracy z aplikacją, w tym identyfikację jako zadanie w tle, pasek postępu i eksport PDF, bez wchodzenia w szczegóły implementacyjne.
 
 ## Aktualizacja renderów
 
