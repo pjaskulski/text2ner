@@ -74,6 +74,24 @@ class AugustinoIdentificationSignalsTest(unittest.TestCase):
         self.assertIn("Piotr Strelicz", queries)
         self.assertIn("Strelicz", queries)
 
+    def test_query_plan_prefers_confident_person_lemma_over_inflected_surface(self):
+        entity_analysis = {
+            "surface": "Świętosława",
+            "tag_type": "persName",
+            "normalized_best": "Świętosław",
+            "confidence_form": "high",
+            "lemma_candidates": ["Świętosław"],
+            "surface_variants": ["Świętosława", "Świętosław"],
+            "office_terms": [],
+            "place_terms": ["Strzelce"],
+        }
+
+        queries = names_linking.build_query_plan(entity_analysis)
+
+        self.assertEqual(queries[0], "Świętosław")
+        self.assertIn("Świętosław Strzelce", queries)
+        self.assertNotIn("Świętosława", queries)
+
     def test_wikidata_candidate_collection_limits_search_queries(self):
         entity_analysis = {
             "surface": "Augustino",

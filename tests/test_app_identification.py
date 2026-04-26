@@ -1,3 +1,4 @@
+import os
 import unittest
 import tempfile
 from unittest.mock import patch
@@ -102,6 +103,12 @@ class PreviewPdfHtmlTest(unittest.TestCase):
                 "surface": "Piotra",
                 "type": "persName",
                 "reason": "no_candidates",
+                "candidate_suggestions": [{
+                    "name": "Piotr z Krakowa",
+                    "url": "https://example.test/Q2",
+                    "source": "test",
+                    "id": "Q2",
+                }],
             }],
             identification_performed=True,
         )
@@ -111,6 +118,9 @@ class PreviewPdfHtmlTest(unittest.TestCase):
         self.assertIn('class="entity-url"', html)
         self.assertIn("https://example.test/Q1", html)
         self.assertIn("no_candidates", html)
+        self.assertIn("Prawdopodobne kandydatury", html)
+        self.assertIn("Piotr z Krakowa", html)
+        self.assertIn("https://example.test/Q2", html)
 
 
 class ProgressSessionStorageTest(unittest.TestCase):
@@ -133,6 +143,31 @@ class ProgressSessionStorageTest(unittest.TestCase):
         self.assertEqual(progress["current"], 2)
         self.assertEqual(progress["total"], 5)
         self.assertEqual(progress["message"], "Identyfikuję 2/5: Jan (persName)")
+
+
+class DiagnosticLogSnippetTest(unittest.TestCase):
+    def test_entity_snippet_accepts_timestamped_diagnostic_lines(self):
+        log_content = "\n".join([
+            "[TEXT2NER-DIAG] [2026-04-26 12:00:01] Analiza encji 'Jan' (persName): kontekst",
+            "[TEXT2NER-DIAG] [2026-04-26 12:00:02] Walidacja persName 'Jan': ok",
+            "[TEXT2NER-DIAG] [2026-04-26 12:00:03] Analiza encji 'Kraków' (placeName): kontekst",
+        ])
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_path = os.path.join(temp_dir, "diagnostic.log")
+            with open(log_path, "w", encoding="utf-8") as log_file:
+                log_file.write(log_content)
+
+            with patch.object(app, "get_diagnostic_log_dir", return_value=temp_dir):
+                snippet = app.extract_entity_log_snippet(
+                    log_path,
+                    "Jan",
+                    "persName",
+                )
+
+        self.assertIn("[2026-04-26 12:00:01]", snippet)
+        self.assertIn("Walidacja persName 'Jan'", snippet)
+        self.assertNotIn("Kraków", snippet)
 
 
 class IdentifyJobStoreTest(unittest.TestCase):

@@ -226,6 +226,32 @@ p {
   font-size: 8pt;
   text-decoration: underline;
 }
+.candidate-suggestions {
+  margin-top: 3px;
+}
+.candidate-suggestions-title {
+  color: #374151;
+  font-family: DejaVu Sans, Arial, sans-serif;
+  font-size: 7pt;
+  font-weight: 700;
+}
+.candidate-suggestion-list {
+  margin: 1px 0 0;
+  padding-left: 14px;
+}
+.candidate-suggestion-list li {
+  margin-bottom: 1px;
+}
+.candidate-suggestion-label,
+.candidate-suggestion-url {
+  font-family: DejaVu Sans, Arial, sans-serif;
+  font-size: 7pt;
+}
+.candidate-suggestion-url {
+  color: #1d4ed8;
+  text-decoration: underline;
+  word-break: break-all;
+}
 """
 
 
@@ -288,14 +314,16 @@ def extract_entity_log_snippet(log_path, entity_surface, entity_type):
     if not entity_surface or entity_type not in {"persName", "placeName"}:
         raise ValueError("Nieprawidłowe dane encji do podglądu logu.")
 
+    diagnostic_prefix_pattern = r"^\[TEXT2NER-DIAG\] (?:\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] )?"
     block_start_pattern = re.compile(
-        r"^\[TEXT2NER-DIAG\] (Analiza encji|Fallback analizy encji|Użyto cache dla encji) '(.+)' \((persName|placeName)\)"
+        diagnostic_prefix_pattern
+        + r"(Analiza encji|Fallback analizy encji|Użyto cache dla encji) '(.+)' \((persName|placeName)\)"
     )
     generic_entity_pattern = re.compile(
-        r"^\[TEXT2NER-DIAG\] .*'(.+)' \((persName|placeName)\)"
+        diagnostic_prefix_pattern + r".*'(.+)' \((persName|placeName)\)"
     )
     validation_pattern = re.compile(
-        r"^\[TEXT2NER-DIAG\] Walidacja (persName|placeName) '(.+)':"
+        diagnostic_prefix_pattern + r"Walidacja (persName|placeName) '(.+)':"
     )
     entity_reference = f"'{entity_surface}' ({entity_type})"
     target_entity_key = (entity_surface, entity_type)
@@ -405,8 +433,70 @@ def normalize_pdf_entity_items(items):
             "type": normalize_whitespace(item.get("type", "")),
             "url": normalize_whitespace(item.get("url", "")),
             "reason": normalize_whitespace(item.get("reason", "")),
+            "candidate_suggestions": normalize_pdf_candidate_suggestions(
+                item.get("candidate_suggestions", [])
+            ),
         })
     return normalized_items
+
+
+def normalize_pdf_candidate_suggestions(suggestions):
+    """Przygotowuje kandydatów ręcznego wyboru do krótkiej listy w PDF."""
+    if not isinstance(suggestions, list):
+        return []
+    normalized_suggestions = []
+    seen = set()
+    for suggestion in suggestions:
+        if not isinstance(suggestion, dict):
+            continue
+        name = normalize_whitespace(suggestion.get("name", ""))
+        url = normalize_whitespace(suggestion.get("url", ""))
+        source = normalize_whitespace(suggestion.get("source", ""))
+        identifier = normalize_whitespace(suggestion.get("id", ""))
+        if not name and not url:
+            continue
+        key = (name, url, source, identifier)
+        if key in seen:
+            continue
+        normalized_suggestions.append({
+            "name": name or identifier or url,
+            "url": url,
+            "source": source,
+            "id": identifier,
+        })
+        seen.add(key)
+    return normalized_suggestions[:5]
+
+
+def render_pdf_candidate_suggestions(suggestions):
+    """Renderuje krótką listę prawdopodobnych kandydatów przy encji bez ref."""
+    if not suggestions:
+        return ""
+
+    rows = []
+    for suggestion in suggestions:
+        source_text = ""
+        if suggestion["source"] or suggestion["id"]:
+            source_label = ":".join(
+                part for part in [suggestion["source"], suggestion["id"]] if part
+            )
+            source_text = f' <span class="entity-meta">[{escape(source_label)}]</span>'
+        url_text = (
+            f' <span class="candidate-suggestion-url">{escape(suggestion["url"])}</span>'
+            if suggestion["url"] else ""
+        )
+        rows.append(
+            '<li>'
+            f'<span class="candidate-suggestion-label">{escape(suggestion["name"])}</span>'
+            f'{source_text}{url_text}'
+            '</li>'
+        )
+    return (
+        '<div class="candidate-suggestions">'
+        '<div class="candidate-suggestions-title">Prawdopodobne kandydatury do ręcznego wyboru:</div>'
+        f'<ol class="candidate-suggestion-list">{"".join(rows)}</ol>'
+        '</div>'
+    )
 
 
 def render_pdf_entity_list(title, items, empty_text):
@@ -426,8 +516,9 @@ def render_pdf_entity_list(title, items, empty_text):
         type_text = f' <span class="entity-meta">[{escape(item["type"])}]</span>' if item["type"] else ""
         url_text = f'<div class="entity-url">{escape(item["url"])}</div>' if item["url"] else ""
         reason_text = f'<div class="entity-meta">Powód: {escape(item["reason"])}</div>' if item["reason"] else ""
+        candidate_suggestions = render_pdf_candidate_suggestions(item["candidate_suggestions"])
         rows.append(
-            f'<li><strong>{escape(display_name)}</strong>{surface}{type_text}{url_text}{reason_text}</li>'
+            f'<li><strong>{escape(display_name)}</strong>{surface}{type_text}{url_text}{reason_text}{candidate_suggestions}</li>'
         )
     return (
         '<section class="entity-section">'

@@ -906,9 +906,7 @@ def start_diagnostic_session(log_dir="log"):
         counter += 1
 
     with open(log_path, "a", encoding="utf-8") as log_file:
-        log_file.write(
-            f"[TEXT2NER-DIAG] Start analizy: {datetime.now().isoformat(timespec='seconds')}\n"
-        )
+        log_file.write(f"{format_diagnostic_log_line('Start analizy.')}\n")
     CURRENT_DIAGNOSTIC_LOG_PATH.set(log_path)
     removed_count = len(cleanup_summary["removed_files"])
     failed_count = len(cleanup_summary["failed_files"])
@@ -932,13 +930,19 @@ def stop_diagnostic_session():
 
 def diagnostic_log(message):
     """Zapisuje komunikat diagnostyczny do pliku sesji albo na stdout."""
-    line = f"[TEXT2NER-DIAG] {message}"
+    line = format_diagnostic_log_line(message)
     log_path = CURRENT_DIAGNOSTIC_LOG_PATH.get()
     if log_path:
         with open(log_path, "a", encoding="utf-8") as log_file:
             log_file.write(f"{line}\n")
     else:
         print(line)
+
+
+def format_diagnostic_log_line(message):
+    """Buduje linię logu diagnostycznego z czasem lokalnym z dokładnością do sekundy."""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return f"[TEXT2NER-DIAG] [{timestamp}] {message}"
 
 
 def normalize_enabled_tag_types(tag_types):
@@ -3352,6 +3356,8 @@ def build_query_plan(entity_analysis):
     """Buduje plan zapytań do źródeł referencyjnych dla jednej encji."""
     queries = []
     seen = set()
+    tag_type = entity_analysis.get("tag_type")
+    confidence_form = normalize_whitespace(entity_analysis.get("confidence_form", "")).lower()
     name_particle_tokens = {
         "de", "del", "della", "di", "do", "dos", "du", "van", "von", "zu", "z", "ze"
     }
@@ -3419,16 +3425,44 @@ def build_query_plan(entity_analysis):
             return 2
         return 3
 
-    add_query(entity_analysis.get("surface"))
-    add_query(entity_analysis.get("normalized_best"))
+    def has_confident_person_lemma():
+        if tag_type != "persName" or confidence_form not in {"high", "medium"}:
+            return False
+        surface = normalize_for_lookup(entity_analysis.get("surface", ""))
+        normalized_best = normalize_for_lookup(entity_analysis.get("normalized_best", ""))
+        lemma_values = [
+            normalize_for_lookup(value)
+            for value in entity_analysis.get("lemma_candidates", [])
+        ]
+        return bool(normalized_best and surface and normalized_best != surface) or any(
+            lemma and lemma != surface for lemma in lemma_values
+        )
 
-    for value in entity_analysis.get("lemma_candidates", [])[:3]:
-        add_query(value)
+    confident_person_lemma = has_confident_person_lemma()
 
-    for value in entity_analysis.get("surface_variants", [])[:2]:
-        add_query(value)
+    if tag_type == "persName":
+        add_query(entity_analysis.get("normalized_best"))
+        for value in entity_analysis.get("lemma_candidates", [])[:3]:
+            add_query(value)
+        if not confident_person_lemma:
+            add_query(entity_analysis.get("surface"))
+        normalized_best_lookup = normalize_for_lookup(entity_analysis.get("normalized_best", ""))
+        for value in entity_analysis.get("surface_variants", [])[:2]:
+            if (
+                confident_person_lemma
+                and normalize_for_lookup(value) != normalized_best_lookup
+            ):
+                continue
+            add_query(value)
+    else:
+        add_query(entity_analysis.get("surface"))
+        add_query(entity_analysis.get("normalized_best"))
+        for value in entity_analysis.get("lemma_candidates", [])[:3]:
+            add_query(value)
+        for value in entity_analysis.get("surface_variants", [])[:2]:
+            add_query(value)
 
-    if entity_analysis.get("tag_type") == "persName":
+    if tag_type == "persName":
         person_name_values = []
         for value in (
             [entity_analysis.get("surface"), entity_analysis.get("normalized_best")]
@@ -3462,7 +3496,7 @@ def build_query_plan(entity_analysis):
                 for place_term in place_terms[1:3]:
                     add_query(f"{base_name} {german_office_terms[0]} {place_term}")
 
-    if entity_analysis.get("tag_type") == "placeName":
+    if tag_type == "placeName":
         base_names = entity_analysis.get("lemma_candidates", [])[:2] or [entity_analysis.get("normalized_best")]
         place_terms = expand_place_terms(entity_analysis.get("place_terms", []))[:3]
         for base_name in base_names:
