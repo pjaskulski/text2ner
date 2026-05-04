@@ -29,8 +29,13 @@ POSTHUMOUS_CONTEXT_GRACE_YEARS = 25
 ENABLE_WIKIDATA_SEMANTIC_FALLBACK = False
 WIKIDATA_SPARQL_URL = "https://query.wikidata.org/sparql"
 PLWIKI_API_URL = "https://pl.wikipedia.org/w/api.php"
+ENWIKI_API_URL = "https://en.wikipedia.org/w/api.php"
 SUPPORTED_TEI_TAG_TYPES = ("persName", "placeName", "date", "roleName", "orgName")
 DEFAULT_ENABLED_TAG_TYPES = ("persName", "placeName", "date", "roleName")
+TEXT2NER_USER_AGENT_NAME = os.environ.get("TEXT2NER_USER_AGENT_NAME", "Text2NERBot")
+TEXT2NER_USER_AGENT_VERSION = os.environ.get("TEXT2NER_USER_AGENT_VERSION", "1.1")
+WIKIMEDIA_USER_AGENT_CONTACT = os.environ.get("WIKIMEDIA_USER_AGENT_CONTACT", "").strip()
+WIKIMEDIA_USER_AGENT = os.environ.get("WIKIMEDIA_USER_AGENT", "").strip()
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 CURRENT_DIAGNOSTIC_LOG_PATH = ContextVar("CURRENT_DIAGNOSTIC_LOG_PATH", default=None)
@@ -38,7 +43,7 @@ CURRENT_GEMINI_MODEL = ContextVar("CURRENT_GEMINI_MODEL", default=DEFAULT_GEMINI
 DIAGNOSTIC_LOG_RETENTION_HOURS = 48
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_DIR = os.path.join(BASE_DIR, "config")
-WIKIDATA_REQUEST_INTERVAL_SECONDS = float(os.environ.get("WIKIDATA_REQUEST_INTERVAL_SECONDS", "2.0"))
+WIKIDATA_REQUEST_INTERVAL_SECONDS = float(os.environ.get("WIKIDATA_REQUEST_INTERVAL_SECONDS", "3.0"))
 WIKIDATA_MAX_SEARCH_QUERIES = int(os.environ.get("WIKIDATA_MAX_SEARCH_QUERIES", "12"))
 WIKIDATA_429_MAX_RETRIES = int(os.environ.get("WIKIDATA_429_MAX_RETRIES", "2"))
 WIKIDATA_429_DEFAULT_WAIT_SECONDS = int(os.environ.get("WIKIDATA_429_DEFAULT_WAIT_SECONDS", "60"))
@@ -88,7 +93,8 @@ WIKIBASE_SOURCES = {
 ENTITY_CACHE = {}
 WIKIDATA_SITELINK_CACHE = {}
 WIKIPEDIA_LEAD_CACHE = {}
-PLWIKI_PAGE_CACHE = {}
+WIKIPEDIA_PAGE_CACHE = {}
+PLWIKI_PAGE_CACHE = WIKIPEDIA_PAGE_CACHE
 
 DATE_MONTH_TOKENS = {
     "ian": 1,
@@ -431,6 +437,65 @@ DEFAULT_PLWIKI_OFFICE_EQUIVALENTS = {
     "wojewoda": "wojewoda",
 }
 
+ENWIKI_OFFICE_EQUIVALENTS = {
+    "archiepiscopus": "archbishop",
+    "bishop": "bishop",
+    "biskup": "bishop",
+    "bp": "bishop",
+    "canon": "canon",
+    "canonicus": "canon",
+    "cardinal": "cardinal",
+    "cardinalis": "cardinal",
+    "chancellor": "chancellor",
+    "cancellarius": "chancellor",
+    "collector": "collector",
+    "collectoris": "collector",
+    "dux": "duke",
+    "episcopus": "bishop",
+    "hetman": "hetman",
+    "kanclerz": "chancellor",
+    "kanonik": "canon",
+    "kapłan": "priest",
+    "kaplan": "priest",
+    "kardynal": "cardinal",
+    "kardynał": "cardinal",
+    "king": "king",
+    "król": "king",
+    "krol": "king",
+    "książę": "duke",
+    "ksiaze": "duke",
+    "notarius": "notary",
+    "notary": "notary",
+    "opat": "abbot",
+    "papa": "pope",
+    "papiez": "pope",
+    "papież": "pope",
+    "pape": "pope",
+    "papal": "papal",
+    "pope": "pope",
+    "presbyter": "priest",
+    "priest": "priest",
+    "rex": "king",
+    "sacerdos": "priest",
+    "thesaurarius": "treasurer",
+    "treasurer": "treasurer",
+    "vir": "cleric",
+    "wojewoda": "voivode",
+}
+
+WIKIPEDIA_FALLBACK_SOURCES = {
+    "plwiki": {
+        "api_url": PLWIKI_API_URL,
+        "label": "plwiki",
+        "user_agent_suffix": "plwiki person fallback",
+    },
+    "enwiki": {
+        "api_url": ENWIKI_API_URL,
+        "label": "enwiki",
+        "user_agent_suffix": "enwiki person fallback",
+    },
+}
+
 
 def _normalize_config_key(value):
     """Porządkuje klucz z pliku konfiguracyjnego do postaci używanej przy lookupach."""
@@ -682,6 +747,26 @@ class WikidataRateLimitError(ValueError):
 def is_wikidata_url(url):
     """Sprawdza, czy żądanie trafia do publicznych usług Wikidaty."""
     return "wikidata.org" in normalize_whitespace(url).lower()
+
+
+def build_wikimedia_user_agent(purpose=""):
+    """Buduje zgodny z polityką Wikimedia identyfikator User-Agent."""
+    if WIKIMEDIA_USER_AGENT:
+        return WIKIMEDIA_USER_AGENT
+
+    app_token = f"{TEXT2NER_USER_AGENT_NAME}/{TEXT2NER_USER_AGENT_VERSION}"
+    contact = WIKIMEDIA_USER_AGENT_CONTACT or "contact not configured; set WIKIMEDIA_USER_AGENT_CONTACT"
+    purpose = normalize_whitespace(purpose)
+    suffix = f" {purpose}" if purpose else ""
+    return f"{app_token} ({contact}) python-requests{suffix}"
+
+
+def wikimedia_headers(purpose="", extra_headers=None):
+    """Zwraca nagłówki HTTP dla zapytań do usług Wikimedia."""
+    headers = {"User-Agent": build_wikimedia_user_agent(purpose)}
+    if extra_headers:
+        headers.update(extra_headers)
+    return headers
 
 
 def get_wikidata_cooldown_remaining_seconds():
@@ -1099,6 +1184,14 @@ def parse_json_object(text):
         raise
 
 
+def truncate_for_diagnostic(value, max_chars=800):
+    """Skraca tekst diagnostyczny do bezpiecznego rozmiaru jednej linii logu."""
+    value = normalize_whitespace(value)
+    if len(value) <= max_chars:
+        return value
+    return value[:max_chars].rstrip() + "..."
+
+
 def _normalize_string_list(values, *, min_length=2):
     """Usuwa duplikaty i zbyt krótkie elementy z listy napisów."""
     normalized_values = []
@@ -1325,6 +1418,130 @@ def build_plwiki_office_phrases(entity_analysis, place_phrases):
                 continue
             for adjective in adjectival_places[:2]:
                 add_phrase(f"{role_phrase} {adjective}")
+
+    return phrases[:8]
+
+
+def prioritize_wikipedia_person_variants(entity_analysis, source_key):
+    """Dobiera kolejność wariantów imienia/nazwy osoby do wyszukiwania w Wikipedii."""
+    raw_values = (
+        list(entity_analysis.get("lemma_candidates", [])) +
+        list(entity_analysis.get("surface_variants", [])) +
+        [entity_analysis.get("normalized_best")]
+    )
+    if source_key == "plwiki":
+        return prioritize_polish_person_variants(
+            augment_with_polish_equivalents("persName", raw_values)
+        )
+
+    variants = []
+    seen = set()
+
+    def add_variant(value):
+        value = normalize_whitespace(value)
+        if len(value) < 3:
+            return
+        folded = value.casefold()
+        if folded in seen:
+            return
+        seen.add(folded)
+        variants.append(value)
+
+    for value in raw_values:
+        add_variant(value)
+    for value in augment_with_polish_equivalents("persName", raw_values):
+        add_variant(value)
+    return variants
+
+
+def build_enwiki_place_phrases(entity_analysis):
+    """Buduje frazy miejscowe pomocne przy fallbacku w angielskiej Wikipedii."""
+    raw_values = list(entity_analysis.get("place_terms", [])) + list(entity_analysis.get("context_clues", []))
+    phrases = []
+    seen = set()
+
+    def add_phrase(value):
+        value = normalize_whitespace(value)
+        if len(value) < 3:
+            return
+        folded = value.casefold()
+        if folded in seen:
+            return
+        seen.add(folded)
+        phrases.append(value)
+
+    for raw_value in raw_values:
+        normalized_lookup = normalize_for_lookup(raw_value)
+        add_phrase(get_polish_equivalent(raw_value, "placeName"))
+        for variant in PLACE_SEARCH_VARIANTS.get(normalized_lookup, []):
+            add_phrase(variant)
+
+        tokens = [token for token in re.split(r"[\s,():;\-]+", normalize_whitespace(raw_value)) if token]
+        for token in tokens:
+            token_lookup = normalize_for_lookup(token)
+            add_phrase(get_polish_equivalent(token, "placeName"))
+            for variant in PLACE_SEARCH_VARIANTS.get(token_lookup, []):
+                add_phrase(variant)
+            if len(token) >= 4:
+                add_phrase(token)
+
+    return phrases[:6]
+
+
+def build_enwiki_office_phrases(entity_analysis, place_phrases):
+    """Łączy urzędy i sygnały miejscowe w angielskie frazy do zapytań enwiki."""
+    office_terms = list(entity_analysis.get("office_terms", []))
+    phrases = []
+    seen = set()
+
+    def add_phrase(value):
+        value = normalize_whitespace(value)
+        if len(value) < 3:
+            return
+        folded = value.casefold()
+        if folded in seen:
+            return
+        seen.add(folded)
+        phrases.append(value)
+
+    for office_term in office_terms:
+        normalized_term = normalize_whitespace(office_term)
+        if not normalized_term:
+            continue
+        lowered = normalize_for_lookup(normalized_term)
+        tokens = [token for token in re.split(r"[\s,():;\-]+", lowered) if token]
+
+        matched_roles = []
+        for token in tokens:
+            equivalent = ENWIKI_OFFICE_EQUIVALENTS.get(token)
+            if equivalent:
+                matched_roles.append(equivalent)
+            if token in {"pape", "papa", "pope", "papal"}:
+                matched_roles.append("papal")
+
+        for role in matched_roles:
+            add_phrase(role)
+
+        office_place_names = []
+        for token in tokens:
+            place_name = get_polish_equivalent(token, "placeName")
+            if place_name:
+                office_place_names.append(place_name)
+            for variant in PLACE_SEARCH_VARIANTS.get(token, []):
+                office_place_names.append(variant)
+
+        office_place_names = _normalize_string_list(office_place_names)
+        for role in matched_roles:
+            for place_name in office_place_names[:2]:
+                add_phrase(f"{role} {place_name}")
+
+    if place_phrases:
+        role_only_phrases = phrases[:]
+        for role_phrase in role_only_phrases:
+            if len(role_phrase.split()) != 1:
+                continue
+            for place_phrase in place_phrases[:2]:
+                add_phrase(f"{role_phrase} {place_phrase}")
 
     return phrases[:8]
 
@@ -2006,7 +2223,7 @@ def fetch_entities_map(source_config, entity_ids):
 
     source = source_config["source"]
     missing_ids = [entity_id for entity_id in entity_ids if (source, entity_id) not in ENTITY_CACHE]
-    headers = {"User-Agent": "EdycjaCyfrowa (PHC IHPAN) - skrypt badawczy"}
+    headers = wikimedia_headers(f"{source} entity fetching")
 
     for offset in range(0, len(missing_ids), 40):
         batch = missing_ids[offset:offset + 40]
@@ -2035,7 +2252,7 @@ def fetch_wikidata_sitelinks(entity_ids):
         return {}
 
     missing_ids = [entity_id for entity_id in entity_ids if entity_id not in WIKIDATA_SITELINK_CACHE]
-    headers = {"User-Agent": "EdycjaCyfrowa (PHC IHPAN) - Wikipedia lead enrichment"}
+    headers = wikimedia_headers("Wikidata sitelink fetching")
 
     for offset in range(0, len(missing_ids), 40):
         batch = missing_ids[offset:offset + 40]
@@ -2075,15 +2292,25 @@ def truncate_wikipedia_lead(text, max_chars=500):
     return text[:max_chars].rstrip(" ,;:") + "..."
 
 
-def fetch_plwiki_extract(page_title):
-    """Pobiera skrócony lead artykułu z polskiej Wikipedii."""
+def get_wikipedia_source_config(source_key):
+    """Zwraca konfigurację obsługiwanego źródła Wikipedii."""
+    source_config = WIKIPEDIA_FALLBACK_SOURCES.get(source_key)
+    if not source_config:
+        raise ValueError(f"Nieobsługiwane źródło Wikipedii: {source_key}")
+    return source_config
+
+
+def fetch_wikipedia_extract(source_key, page_title):
+    """Pobiera skrócony lead artykułu z wybranej Wikipedii."""
+    source_config = get_wikipedia_source_config(source_key)
     page_title = normalize_whitespace(page_title)
     if not page_title:
         return ""
-    if page_title in WIKIPEDIA_LEAD_CACHE:
-        return WIKIPEDIA_LEAD_CACHE[page_title]
+    cache_key = (source_key, page_title)
+    if cache_key in WIKIPEDIA_LEAD_CACHE:
+        return WIKIPEDIA_LEAD_CACHE[cache_key]
 
-    headers = {"User-Agent": "EdycjaCyfrowa (PHC IHPAN) - Wikipedia lead enrichment"}
+    headers = wikimedia_headers(f"{source_config['label']} lead enrichment")
     params = {
         "action": "query",
         "prop": "extracts",
@@ -2093,7 +2320,13 @@ def fetch_plwiki_extract(page_title):
         "explaintext": 1,
         "format": "json",
     }
-    response = get_json_response(PLWIKI_API_URL, params, headers, "plwiki extracts")
+    source_label = source_config["label"]
+    response = get_json_response(
+        source_config["api_url"],
+        params,
+        headers,
+        f"{source_label} extracts",
+    )
     pages = response.get("query", {}).get("pages", {})
     extract_text = ""
     for page_data in pages.values():
@@ -2102,17 +2335,24 @@ def fetch_plwiki_extract(page_title):
             break
 
     extract_text = truncate_wikipedia_lead(extract_text)
-    WIKIPEDIA_LEAD_CACHE[page_title] = extract_text
+    WIKIPEDIA_LEAD_CACHE[cache_key] = extract_text
     return extract_text
 
 
-def search_plwiki_articles(query, limit=10):
-    """Wyszukuje artykuły w polskiej Wikipedii dla zapytania fallbackowego."""
+def fetch_plwiki_extract(page_title):
+    """Pobiera skrócony lead artykułu z polskiej Wikipedii."""
+    return fetch_wikipedia_extract("plwiki", page_title)
+
+
+def search_wikipedia_articles(source_key, query, limit=10):
+    """Wyszukuje artykuły w wybranej Wikipedii dla zapytania fallbackowego."""
+    source_config = get_wikipedia_source_config(source_key)
     query = normalize_whitespace(query)
     if not query:
         return []
 
-    headers = {"User-Agent": "EdycjaCyfrowa (PHC IHPAN) - plwiki person fallback"}
+    source_label = source_config["label"]
+    headers = wikimedia_headers(source_config["user_agent_suffix"])
     params = {
         "action": "query",
         "list": "search",
@@ -2120,18 +2360,33 @@ def search_plwiki_articles(query, limit=10):
         "srlimit": limit,
         "format": "json",
     }
-    response = get_json_response(PLWIKI_API_URL, params, headers, "plwiki search")
+    response = get_json_response(
+        source_config["api_url"],
+        params,
+        headers,
+        f"{source_label} search",
+    )
     return response.get("query", {}).get("search", [])
 
 
-def fetch_plwiki_pages_metadata(page_ids):
-    """Pobiera metadane stron plwiki wraz z QID i krótkim leadem."""
+def search_plwiki_articles(query, limit=10):
+    """Wyszukuje artykuły w polskiej Wikipedii dla zapytania fallbackowego."""
+    return search_wikipedia_articles("plwiki", query, limit=limit)
+
+
+def fetch_wikipedia_pages_metadata(source_key, page_ids):
+    """Pobiera metadane stron Wikipedii wraz z QID i krótkim leadem."""
+    source_config = get_wikipedia_source_config(source_key)
     page_ids = [str(page_id) for page_id in dict.fromkeys(page_ids) if str(page_id).isdigit()]
     if not page_ids:
         return {}
 
-    missing_ids = [page_id for page_id in page_ids if page_id not in PLWIKI_PAGE_CACHE]
-    headers = {"User-Agent": "EdycjaCyfrowa (PHC IHPAN) - plwiki person fallback"}
+    missing_ids = [
+        page_id for page_id in page_ids
+        if (source_key, page_id) not in WIKIPEDIA_PAGE_CACHE
+    ]
+    source_label = source_config["label"]
+    headers = wikimedia_headers(source_config["user_agent_suffix"])
 
     for offset in range(0, len(missing_ids), 20):
         batch = missing_ids[offset:offset + 20]
@@ -2145,10 +2400,15 @@ def fetch_plwiki_pages_metadata(page_ids):
             "ppprop": "wikibase_item",
             "format": "json",
         }
-        response = get_json_response(PLWIKI_API_URL, params, headers, "plwiki page metadata")
+        response = get_json_response(
+            source_config["api_url"],
+            params,
+            headers,
+            f"{source_label} page metadata",
+        )
         pages = response.get("query", {}).get("pages", {})
         for page_id, page_data in pages.items():
-            PLWIKI_PAGE_CACHE[str(page_id)] = {
+            WIKIPEDIA_PAGE_CACHE[(source_key, str(page_id))] = {
                 "pageid": str(page_id),
                 "title": normalize_whitespace(page_data.get("title", "")),
                 "extract": truncate_wikipedia_lead(page_data.get("extract", "")),
@@ -2158,9 +2418,14 @@ def fetch_plwiki_pages_metadata(page_ids):
             }
 
     return {
-        page_id: PLWIKI_PAGE_CACHE.get(page_id, {})
+        page_id: WIKIPEDIA_PAGE_CACHE.get((source_key, page_id), {})
         for page_id in page_ids
     }
+
+
+def fetch_plwiki_pages_metadata(page_ids):
+    """Pobiera metadane stron plwiki wraz z QID i krótkim leadem."""
+    return fetch_wikipedia_pages_metadata("plwiki", page_ids)
 
 
 def extract_entity_id_values(claims, property_id):
@@ -2473,7 +2738,7 @@ def search_wikibase_special(query, source_config):
     if not fuzzy_query:
         return []
 
-    headers = {"User-Agent": "EdycjaCyfrowa (PHC IHPAN) - skrypt badawczy"}
+    headers = wikimedia_headers(f"{source_config['source']} search")
     params = {
         "action": "query",
         "list": "search",
@@ -2909,10 +3174,10 @@ LIMIT 50
 
 def run_wikidata_sparql_query(query):
     """Uruchamia zapytanie SPARQL na endpointcie Wikidaty."""
-    headers = {
-        "Accept": "application/sparql-results+json",
-        "User-Agent": "EdycjaCyfrowa (PHC IHPAN) - Wikidata semantic fallback",
-    }
+    headers = wikimedia_headers(
+        "Wikidata semantic fallback",
+        {"Accept": "application/sparql-results+json"},
+    )
     params = {
         "query": query,
         "format": "json",
@@ -3177,7 +3442,7 @@ def enrich_wikidata_candidates_with_plwiki_leads(candidates, limit=12):
 
 
 def title_matches_person_name(title, name_variants):
-    """Sprawdza, czy tytuł strony plwiki przypomina jedną z form osoby."""
+    """Sprawdza, czy tytuł strony Wikipedii przypomina jedną z form osoby."""
     title_norm = normalize_for_lookup(title)
     if not title_norm:
         return False
@@ -3194,17 +3459,15 @@ def title_matches_person_name(title, name_variants):
     return False
 
 
-def build_plwiki_person_fallback_queries(entity_analysis):
-    """Buduje zestaw zapytań do awaryjnego wyszukiwania osób w plwiki."""
-    raw_name_variants = augment_with_polish_equivalents(
-        "persName",
-        list(entity_analysis.get("lemma_candidates", [])) +
-        list(entity_analysis.get("surface_variants", [])) +
-        [entity_analysis.get("normalized_best")],
-    )
-    name_variants = prioritize_polish_person_variants(raw_name_variants)[:4]
-    place_phrases = build_plwiki_place_phrases(entity_analysis)
-    office_phrases = build_plwiki_office_phrases(entity_analysis, place_phrases)
+def build_wikipedia_person_fallback_queries(entity_analysis, source_key):
+    """Buduje zestaw zapytań do awaryjnego wyszukiwania osób w wybranej Wikipedii."""
+    name_variants = prioritize_wikipedia_person_variants(entity_analysis, source_key)[:4]
+    if source_key == "enwiki":
+        place_phrases = build_enwiki_place_phrases(entity_analysis)
+        office_phrases = build_enwiki_office_phrases(entity_analysis, place_phrases)
+    else:
+        place_phrases = build_plwiki_place_phrases(entity_analysis)
+        office_phrases = build_plwiki_office_phrases(entity_analysis, place_phrases)
 
     queries = []
     seen = set()
@@ -3236,8 +3499,13 @@ def build_plwiki_person_fallback_queries(entity_analysis):
     return queries[:12]
 
 
-def should_use_plwiki_person_fallback(entity_analysis, tag_type, decision):
-    """Ocena, czy po nieudanym linkowaniu uruchamiać fallback plwiki."""
+def build_plwiki_person_fallback_queries(entity_analysis):
+    """Buduje zestaw zapytań do awaryjnego wyszukiwania osób w plwiki."""
+    return build_wikipedia_person_fallback_queries(entity_analysis, "plwiki")
+
+
+def should_use_wikipedia_person_fallback(entity_analysis, tag_type, decision):
+    """Ocena, czy po nieudanym linkowaniu uruchamiać fallback Wikipedii."""
     if tag_type != "persName":
         return False, "not_persName"
     if decision.get("status") == "selected":
@@ -3247,37 +3515,38 @@ def should_use_plwiki_person_fallback(entity_analysis, tag_type, decision):
     return True, "standard_linking_failed"
 
 
-def collect_plwiki_person_fallback_candidates(entity_analysis):
-    """Zbiera kandydatów osób przez polską Wikipedię i mapowanie do Wikidaty."""
-    queries = build_plwiki_person_fallback_queries(entity_analysis)
+def should_use_plwiki_person_fallback(entity_analysis, tag_type, decision):
+    """Zgodność z dawną nazwą funkcji dla fallbacku Wikipedii."""
+    return should_use_wikipedia_person_fallback(entity_analysis, tag_type, decision)
+
+
+def collect_wikipedia_person_fallback_candidates(entity_analysis, source_key):
+    """Zbiera kandydatów osób przez Wikipedię i mapowanie do Wikidaty."""
+    source_config = get_wikipedia_source_config(source_key)
+    source_label = source_config["label"]
+    queries = build_wikipedia_person_fallback_queries(entity_analysis, source_key)
     diagnostic_log(
-        f"Plan fallbacku plwiki dla '{entity_analysis['surface']}' (persName): {queries}"
+        f"Plan fallbacku {source_label} dla '{entity_analysis['surface']}' (persName): {queries}"
     )
     if not queries:
         return []
 
-    name_variants = prioritize_polish_person_variants(
-        augment_with_polish_equivalents(
-            "persName",
-            list(entity_analysis.get("lemma_candidates", [])) +
-            list(entity_analysis.get("surface_variants", [])) +
-            [entity_analysis.get("normalized_best")],
-        )
-    )
+    name_variants = prioritize_wikipedia_person_variants(entity_analysis, source_key)
     page_hits = {}
 
     for query in queries:
         try:
-            search_hits = search_plwiki_articles(query, limit=15)
+            search_hits = search_wikipedia_articles(source_key, query, limit=15)
         except Exception as exc:
             diagnostic_log(
-                f"Błąd wyszukiwania plwiki dla '{entity_analysis['surface']}' (persName), query='{query}': {exc}"
+                f"Błąd wyszukiwania {source_label} dla '{entity_analysis['surface']}' "
+                f"(persName), query='{query}': {exc}"
             )
             continue
 
         hit_titles = [normalize_whitespace(hit.get("title", "")) for hit in search_hits]
         diagnostic_log(
-            f"plwiki search '{query}' dla '{entity_analysis['surface']}' (persName): {hit_titles}"
+            f"{source_label} search '{query}' dla '{entity_analysis['surface']}' (persName): {hit_titles}"
         )
 
         for hit in search_hits:
@@ -3301,11 +3570,12 @@ def collect_plwiki_person_fallback_candidates(entity_analysis):
 
     if not page_hits:
         diagnostic_log(
-            f"Fallback plwiki nie zwrócił trafień tytułowych dla '{entity_analysis['surface']}' (persName)."
+            f"Fallback {source_label} nie zwrócił trafień tytułowych dla "
+            f"'{entity_analysis['surface']}' (persName)."
         )
         return []
 
-    pages_metadata = fetch_plwiki_pages_metadata(page_hits.keys())
+    pages_metadata = fetch_wikipedia_pages_metadata(source_key, page_hits.keys())
     wikidata_hits = []
     qid_to_page = {}
     for page_id, page_entry in page_hits.items():
@@ -3323,7 +3593,7 @@ def collect_plwiki_person_fallback_candidates(entity_analysis):
 
     wikidata_hits = list(dict.fromkeys(wikidata_hits))
     diagnostic_log(
-        f"Kandydaci QID z plwiki dla '{entity_analysis['surface']}' (persName): {wikidata_hits}"
+        f"Kandydaci QID z {source_label} dla '{entity_analysis['surface']}' (persName): {wikidata_hits}"
     )
     if not wikidata_hits:
         return []
@@ -3335,7 +3605,7 @@ def collect_plwiki_person_fallback_candidates(entity_analysis):
         page_data = qid_to_page.get(candidate["id"], {})
         if page_data.get("extract"):
             candidate["wikipedia_lead"] = page_data["extract"]
-            candidate["wikipedia_source"] = "plwiki_search"
+            candidate["wikipedia_source"] = f"{source_label}_search"
         if page_data.get("title"):
             candidate["wikipedia_title"] = page_data["title"]
         for query in page_data.get("matched_queries", []):
@@ -3345,11 +3615,30 @@ def collect_plwiki_person_fallback_candidates(entity_analysis):
     ordered = order_candidates_for_review(dedupe_candidates(candidates), entity_analysis)[:10]
     ordered_labels = [f"{candidate['source']}:{candidate['id']}" for candidate in ordered]
     diagnostic_log(
-        f"Uporządkowani kandydaci z fallbacku plwiki dla '{entity_analysis['surface']}' (persName): "
+        f"Uporządkowani kandydaci z fallbacku {source_label} dla "
+        f"'{entity_analysis['surface']}' (persName): "
         f"{ordered_labels}"
     )
-    diagnostic_log_temporal_candidates(entity_analysis, "persName", ordered, "plwiki_fallback")
+    diagnostic_log_temporal_candidates(entity_analysis, "persName", ordered, f"{source_label}_fallback")
     return ordered
+
+
+def collect_plwiki_person_fallback_candidates(entity_analysis):
+    """Zbiera kandydatów osób przez polską Wikipedię i mapowanie do Wikidaty."""
+    return collect_wikipedia_person_fallback_candidates(entity_analysis, "plwiki")
+
+
+def collect_wikipedia_person_fallback_candidates_from_all_sources(entity_analysis):
+    """Zbiera kandydatów osób z plwiki i enwiki, a następnie scala je po rekordach Wikidaty."""
+    collected_candidates = []
+    for source_key in ("plwiki", "enwiki"):
+        collected_candidates.extend(
+            collect_wikipedia_person_fallback_candidates(entity_analysis, source_key)
+        )
+    return order_candidates_for_review(
+        dedupe_candidates(collected_candidates),
+        entity_analysis,
+    )[:10]
 
 
 def build_query_plan(entity_analysis):
@@ -4199,6 +4488,7 @@ Przykład dla miejsca:
         config = types.GenerateContentConfig(
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
             http_options=http_options,
+            response_mime_type="application/json",
         )
         response = client.models.generate_content(
             model=get_current_gemini_model(),
@@ -4206,7 +4496,15 @@ Przykład dla miejsca:
             config=config,
         )
 
-        analysis = parse_json_object(response.text)
+        response_text = response.text or ""
+        try:
+            analysis = parse_json_object(response_text)
+        except Exception as parse_exc:
+            diagnostic_log(
+                f"Nie udało się sparsować JSON analizy Gemini dla '{name}' ({tag_type}): "
+                f"{parse_exc}; raw_response={truncate_for_diagnostic(response_text)}"
+            )
+            raise
         normalized = normalize_form_analysis(name, tag_type, analysis, context=context)
         normalized = validate_form_analysis(name, tag_type, normalized)
         local_context_years = extract_years_from_text(context)
@@ -4584,29 +4882,29 @@ def link_entity(name, context, tag_type, document_years=None):
             f"Fallback semantyczny Wikidata jest wyłączony dla '{name}' ({tag_type})."
         )
 
-    should_use_plwiki_fallback, plwiki_fallback_reason = should_use_plwiki_person_fallback(
+    should_use_wikipedia_fallback, wikipedia_fallback_reason = should_use_wikipedia_person_fallback(
         entity_analysis,
         tag_type,
         decision,
     )
-    if should_use_plwiki_fallback:
+    if should_use_wikipedia_fallback:
         diagnostic_log(
-            f"Uruchamiam fallback plwiki dla '{name}' ({tag_type}); "
-            f"powód={plwiki_fallback_reason}."
+            f"Uruchamiam fallback Wikipedii (plwiki + enwiki) dla '{name}' ({tag_type}); "
+            f"powód={wikipedia_fallback_reason}."
         )
-        plwiki_candidates = collect_plwiki_person_fallback_candidates(entity_analysis)
-        if plwiki_candidates:
-            candidates = plwiki_candidates
+        wikipedia_candidates = collect_wikipedia_person_fallback_candidates_from_all_sources(entity_analysis)
+        if wikipedia_candidates:
+            candidates = wikipedia_candidates
             suggestion_candidates.extend(candidates)
             decision = build_link_decision(name, context, tag_type, entity_analysis, candidates)
         else:
             diagnostic_log(
-                f"Fallback plwiki nie zwrócił kandydatów dla '{name}' ({tag_type})."
+                f"Fallback Wikipedii nie zwrócił kandydatów dla '{name}' ({tag_type})."
             )
     elif decision.get("status") != "selected":
         diagnostic_log(
-            f"Fallback plwiki pominięty dla '{name}' ({tag_type}); "
-            f"powód={plwiki_fallback_reason}."
+            f"Fallback Wikipedii pominięty dla '{name}' ({tag_type}); "
+            f"powód={wikipedia_fallback_reason}."
         )
 
     return {

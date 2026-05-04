@@ -38,7 +38,7 @@ Przetwarzanie wykorzystuje modele językowe i referencyjne bazy wiedzy:
 - ten sam model pomaga w ostrożnej analizie formy encji i w końcowym wyborze najlepszego kandydata z baz referencyjnych,
 - wyszukiwanie kandydatów odbywa się przez zewnętrzne źródła referencyjne:
   `WikiHum`, `va.wiki.kul.pl` i `Wikidata`,
-- w trudniejszych przypadkach dla osób używany jest fallback oparty o polską Wikipedię.
+- w trudniejszych przypadkach dla osób używany jest fallback oparty o polską i angielską Wikipedię.
 
 Jeżeli żaden z kandydatów znalezionych w bazach nie pasuje wystarczająco dobrze, encja pozostaje bez `ref`, ale zachowuje znormalizowany `key`.
 
@@ -76,7 +76,7 @@ Z poziomu przycisku `Słowniki` użytkownik może otworzyć osobne okno konfigur
 - przymiotników miejscowych,
 - urzędów i funkcji.
 
-Słowniki te zawierają polskie odpowiedniki łacińskich, niemieckich nazw, które są wykorzystywane do tworzenia wariantów wyszukiwania w instancjach wikibase i polskiej wikipedii.
+Słowniki te zawierają polskie odpowiedniki łacińskich, niemieckich nazw, które są wykorzystywane do tworzenia wariantów wyszukiwania w instancjach wikibase i polskiej Wikipedii. Część tych wariantów jest też pomocna przy budowaniu zapytań do angielskiej Wikipedii, zwłaszcza dla nazw miejsc mających międzynarodową formę.
 
 W każdej zakładce można:
 
@@ -244,11 +244,11 @@ Jeżeli nie, pozostaje samo `key`.
 
 ### 9. Dodatkowe próby rozstrzygnięcia dla osób
 
-Dla części encji osobowych aplikacja może uruchomić dodatkowy fallback oparty o polską Wikipedię.
+Dla części encji osobowych aplikacja może uruchomić dodatkowy fallback oparty o polską i angielską Wikipedię.
 
 W tym wariancie:
 
-- budowane są bardziej encyklopedyczne polskie zapytania,
+- budowane są bardziej encyklopedyczne zapytania: osobno polskie dla `plwiki` i angielskie dla `enwiki`,
 - pobierane są tytuły, `pageprops` i leady artykułów,
 - wyniki są mapowane na odpowiadające im rekordy Wikidaty,
 - Model Gemini dostaje dodatkowy materiał do ponownego rozstrzygnięcia.
@@ -294,7 +294,24 @@ Domyślne ścieżki i czasy przechowywania można zmienić zmiennymi środowisko
 - `TEXT2NER_IDENTIFY_JOB_DB_PATH` - ścieżka bazy SQLite z kolejką identyfikacji, domyślnie `/tmp/text2ner_identify_jobs.sqlite3`,
 - `TEXT2NER_IDENTIFY_JOB_RETENTION_SECONDS` - czas przechowywania zakończonych zadań, domyślnie 48 godzin,
 - `TEXT2NER_IDENTIFY_JOB_STALE_RUNNING_SECONDS` - czas po którym niedokończone zadanie `running` uznawane jest za przerwane, domyślnie 1 godzina,
-- `TEXT2NER_IDENTIFY_WORKER_POLL_SECONDS` - odstęp odpytywania kolejki przez worker, domyślnie 1 sekunda.
+- `TEXT2NER_IDENTIFY_WORKER_POLL_SECONDS` - odstęp odpytywania kolejki przez worker, domyślnie 1 sekunda,
+- `WIKIDATA_REQUEST_INTERVAL_SECONDS` - minimalny odstęp między zapytaniami do Wikidaty, domyślnie 3 sekundy,
+- `WIKIDATA_MAX_SEARCH_QUERIES` - maksymalna liczba zapytań wyszukiwawczych do Wikidaty dla jednej encji, domyślnie 12,
+- `WIKIMEDIA_USER_AGENT_CONTACT` - kontakt do operatora aplikacji używany w nagłówku `User-Agent` dla Wikipedii i Wikidaty; powinien zawierać adres e-mail, URL kontaktowy albo konto użytkownika Wikimedia,
+- `WIKIMEDIA_USER_AGENT` - opcjonalne pełne nadpisanie nagłówka `User-Agent`, jeśli trzeba użyć własnego formatu,
+- `TEXT2NER_USER_AGENT_NAME` i `TEXT2NER_USER_AGENT_VERSION` - opcjonalna nazwa i wersja aplikacji używana przy składaniu domyślnego `User-Agent`.
+
+Przykład zgodnego nagłówka dla Wikimedia:
+
+```bash
+WIKIMEDIA_USER_AGENT_CONTACT="https://example.org/contact"
+```
+
+Aplikacja zbuduje wtedy nagłówek w rodzaju:
+
+```text
+Text2NERBot/1.1 (https://example.org/contact) python-requests enwiki person fallback
+```
 
 ## Ograniczenia i uwagi
 
@@ -325,7 +342,7 @@ Znaczenie poszczególnych słowników jest następujące:
 - `POLISH_PERSON_EQUIVALENTS` - słownik łacińskich lub historycznych form imion z polskimi odpowiednikami. Pozwala wyszukiwać różne warianty tych samych osób w bazach referencyjnych.
 - `POLISH_PLACE_EQUIVALENTS` - słownik historycznych i łacińskich nazw miejsc z polskimi odpowiednikami. Dzięki temu aplikacja może przechodzić od form historycznych do form polskich częściej spotykanych w bazach referencyjnych i Wikipedii.
 - `POLISH_PLACE_ADJECTIVAL_EQUIVALENTS` - mapowanie nazw miejsc na polskie przymiotniki, np. `pomerania -> pomorski`, `prussia -> pruski`. Pozwala budować bardziej naturalne polskie frazy do wyszukiwania, np. nie tylko `Chełmno`, ale też `chełmiński`.
-- `PLWIKI_OFFICE_EQUIVALENTS` - słownik różnych form urzędów i ról z polskimi odpowiednikami, np. `cardinalis -> kardynał`, `episcopus -> biskup`, `cancellarius -> kanclerz`. Służy głównie dodatkowemu wyszukiwaniu opartemu o polską Wikipedię.
+- `PLWIKI_OFFICE_EQUIVALENTS` - słownik różnych form urzędów i ról z polskimi odpowiednikami, np. `cardinalis -> kardynał`, `episcopus -> biskup`, `cancellarius -> kanclerz`. Służy głównie dodatkowemu wyszukiwaniu opartemu o polską Wikipedię; fallback angielskiej Wikipedii ma osobny zestaw podstawowych odpowiedników w kodzie.
 
 Każdy wpis ma postać prostego mapowania tekstowego, np.:
 

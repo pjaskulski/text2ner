@@ -22,7 +22,7 @@ Diagram obejmuje pełny przebieg przetwarzania:
 - pasek postępu identyfikacji oparty o `update_progress(...)`, pliki JSON i rekord zadania SQLite,
 - iterację po encjach `persName` i `placeName` podczas identyfikacji,
 - analizę formy encji, budowę planu zapytań i wybór kandydata przez Gemini,
-- wyszukiwanie kandydatów w `WikiHum`, `va.wiki.kul.pl`, `Wikidata` oraz fallback przez polską Wikipedię dla części encji osobowych,
+- wyszukiwanie kandydatów w `WikiHum`, `va.wiki.kul.pl`, `Wikidata` oraz fallback przez polską i angielską Wikipedię dla części encji osobowych,
 - złożenie końcowego TEI-XML, list encji oraz odpowiedzi JSON zwracanej do interfejsu,
 - eksport kolorowego podglądu do PDF przez `POST /preview-pdf`.
 

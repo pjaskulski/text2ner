@@ -372,30 +372,30 @@
 <!-- start_log_identify -->
 <g id="node24" class="node">
 <title>start_log_identify</title>
-<path fill="#f8fafc" stroke="#94a3b8" d="M659,-3149C659,-3149 517,-3149 517,-3149 511,-3149 505,-3143 505,-3137 505,-3137 505,-3111 505,-3111 505,-3105 511,-3099 517,-3099 517,-3099 659,-3099 659,-3099 665,-3099 671,-3105 671,-3111 671,-3111 671,-3137 671,-3137 671,-3143 665,-3149 659,-3149"/>
-<text text-anchor="middle" x="588" y="-3133.2" font-family="Helvetica,sans-Serif" font-size="11.00">start_diagnostic_session:</text>
-<text text-anchor="middle" x="588" y="-3121.2" font-family="Helvetica,sans-Serif" font-size="11.00">usuń logi starsze niż 48 h</text>
-<text text-anchor="middle" x="588" y="-3109.2" font-family="Helvetica,sans-Serif" font-size="11.00">utwórz nowy plik logu</text>
+<path fill="#f8fafc" stroke="#94a3b8" d="M656,-3149C656,-3149 514,-3149 514,-3149 508,-3149 502,-3143 502,-3137 502,-3137 502,-3111 502,-3111 502,-3105 508,-3099 514,-3099 514,-3099 656,-3099 656,-3099 662,-3099 668,-3105 668,-3111 668,-3111 668,-3137 668,-3137 668,-3143 662,-3149 656,-3149"/>
+<text text-anchor="middle" x="585" y="-3133.2" font-family="Helvetica,sans-Serif" font-size="11.00">start_diagnostic_session:</text>
+<text text-anchor="middle" x="585" y="-3121.2" font-family="Helvetica,sans-Serif" font-size="11.00">usuń logi starsze niż 48 h</text>
+<text text-anchor="middle" x="585" y="-3109.2" font-family="Helvetica,sans-Serif" font-size="11.00">utwórz nowy plik logu</text>
 </g>
 <!-- claim_job&#45;&gt;start_log_identify -->
 <g id="edge25" class="edge">
 <title>claim_job&#45;&gt;start_log_identify</title>
-<path fill="none" stroke="#475569" d="M581.27,-3197.52C582.43,-3185.02 583.86,-3169.67 585.09,-3156.32"/>
-<polygon fill="#475569" stroke="#475569" points="587.55,-3156.33 585.76,-3149.13 582.67,-3155.88 587.55,-3156.33"/>
+<path fill="none" stroke="#475569" d="M580.51,-3197.52C581.29,-3185.02 582.24,-3169.67 583.06,-3156.32"/>
+<polygon fill="#475569" stroke="#475569" points="585.52,-3156.27 583.51,-3149.13 580.63,-3155.97 585.52,-3156.27"/>
 </g>
 <!-- progress_start -->
 <g id="node27" class="node">
 <title>progress_start</title>
-<path fill="#f8fafc" stroke="#94a3b8" d="M645.5,-3040C645.5,-3040 548.5,-3040 548.5,-3040 542.5,-3040 536.5,-3034 536.5,-3028 536.5,-3028 536.5,-3002 536.5,-3002 536.5,-2996 542.5,-2990 548.5,-2990 548.5,-2990 645.5,-2990 645.5,-2990 651.5,-2990 657.5,-2996 657.5,-3002 657.5,-3002 657.5,-3028 657.5,-3028 657.5,-3034 651.5,-3040 645.5,-3040"/>
-<text text-anchor="middle" x="597" y="-3024.2" font-family="Helvetica,sans-Serif" font-size="11.00">update_progress:</text>
-<text text-anchor="middle" x="597" y="-3012.2" font-family="Helvetica,sans-Serif" font-size="11.00">status=running</text>
-<text text-anchor="middle" x="597" y="-3000.2" font-family="Helvetica,sans-Serif" font-size="11.00">start identyfikacji</text>
+<path fill="#f8fafc" stroke="#94a3b8" d="M643.5,-3040C643.5,-3040 546.5,-3040 546.5,-3040 540.5,-3040 534.5,-3034 534.5,-3028 534.5,-3028 534.5,-3002 534.5,-3002 534.5,-2996 540.5,-2990 546.5,-2990 546.5,-2990 643.5,-2990 643.5,-2990 649.5,-2990 655.5,-2996 655.5,-3002 655.5,-3002 655.5,-3028 655.5,-3028 655.5,-3034 649.5,-3040 643.5,-3040"/>
+<text text-anchor="middle" x="595" y="-3024.2" font-family="Helvetica,sans-Serif" font-size="11.00">update_progress:</text>
+<text text-anchor="middle" x="595" y="-3012.2" font-family="Helvetica,sans-Serif" font-size="11.00">status=running</text>
+<text text-anchor="middle" x="595" y="-3000.2" font-family="Helvetica,sans-Serif" font-size="11.00">start identyfikacji</text>
 </g>
 <!-- start_log_identify&#45;&gt;progress_start -->
 <g id="edge26" class="edge">
 <title>start_log_identify&#45;&gt;progress_start</title>
-<path fill="none" stroke="#475569" d="M590.02,-3098.99C591.3,-3083.81 592.96,-3064.03 594.34,-3047.59"/>
-<polygon fill="#475569" stroke="#475569" points="596.81,-3047.48 594.96,-3040.3 591.93,-3047.07 596.81,-3047.48"/>
+<path fill="none" stroke="#475569" d="M587.24,-3098.99C588.66,-3083.81 590.51,-3064.03 592.05,-3047.59"/>
+<polygon fill="#475569" stroke="#475569" points="594.52,-3047.5 592.73,-3040.3 589.64,-3047.04 594.52,-3047.5"/>
 </g>
 <!-- extract_doc_years -->
 <g id="node26" class="node">
@@ -426,8 +426,8 @@
 <!-- progress_start&#45;&gt;identify_input -->
 <g id="edge27" class="edge">
 <title>progress_start&#45;&gt;identify_input</title>
-<path fill="none" stroke="#475569" d="M597.61,-2989.92C598.07,-2971.53 598.71,-2946.05 599.22,-2926.11"/>
-<polygon fill="#475569" stroke="#475569" points="601.67,-2926.11 599.39,-2919.05 596.77,-2925.98 601.67,-2926.11"/>
+<path fill="none" stroke="#475569" d="M596.01,-2989.92C596.78,-2971.53 597.86,-2946.05 598.69,-2926.11"/>
+<polygon fill="#475569" stroke="#475569" points="601.14,-2926.14 598.99,-2919.05 596.25,-2925.94 601.14,-2926.14"/>
 </g>
 <!-- progress_entity -->
 <g id="node29" class="node">
@@ -528,74 +528,74 @@
 <!-- analyze_outputs -->
 <g id="node35" class="node">
 <title>analyze_outputs</title>
-<path fill="#f8fafc" stroke="#94a3b8" d="M720.5,-1999C720.5,-1999 617.5,-1999 617.5,-1999 611.5,-1999 605.5,-1993 605.5,-1987 605.5,-1987 605.5,-1913 605.5,-1913 605.5,-1907 611.5,-1901 617.5,-1901 617.5,-1901 720.5,-1901 720.5,-1901 726.5,-1901 732.5,-1907 732.5,-1913 732.5,-1913 732.5,-1987 732.5,-1987 732.5,-1993 726.5,-1999 720.5,-1999"/>
-<text text-anchor="middle" x="669" y="-1983.2" font-family="Helvetica,sans-Serif" font-size="11.00">normalized_best</text>
-<text text-anchor="middle" x="669" y="-1971.2" font-family="Helvetica,sans-Serif" font-size="11.00">lemma_candidates</text>
-<text text-anchor="middle" x="669" y="-1959.2" font-family="Helvetica,sans-Serif" font-size="11.00">surface_variants</text>
-<text text-anchor="middle" x="669" y="-1947.2" font-family="Helvetica,sans-Serif" font-size="11.00">office_terms</text>
-<text text-anchor="middle" x="669" y="-1935.2" font-family="Helvetica,sans-Serif" font-size="11.00">place_terms</text>
-<text text-anchor="middle" x="669" y="-1923.2" font-family="Helvetica,sans-Serif" font-size="11.00">context_clues</text>
-<text text-anchor="middle" x="669" y="-1911.2" font-family="Helvetica,sans-Serif" font-size="11.00">context_years</text>
+<path fill="#f8fafc" stroke="#94a3b8" d="M742.5,-1999C742.5,-1999 639.5,-1999 639.5,-1999 633.5,-1999 627.5,-1993 627.5,-1987 627.5,-1987 627.5,-1913 627.5,-1913 627.5,-1907 633.5,-1901 639.5,-1901 639.5,-1901 742.5,-1901 742.5,-1901 748.5,-1901 754.5,-1907 754.5,-1913 754.5,-1913 754.5,-1987 754.5,-1987 754.5,-1993 748.5,-1999 742.5,-1999"/>
+<text text-anchor="middle" x="691" y="-1983.2" font-family="Helvetica,sans-Serif" font-size="11.00">normalized_best</text>
+<text text-anchor="middle" x="691" y="-1971.2" font-family="Helvetica,sans-Serif" font-size="11.00">lemma_candidates</text>
+<text text-anchor="middle" x="691" y="-1959.2" font-family="Helvetica,sans-Serif" font-size="11.00">surface_variants</text>
+<text text-anchor="middle" x="691" y="-1947.2" font-family="Helvetica,sans-Serif" font-size="11.00">office_terms</text>
+<text text-anchor="middle" x="691" y="-1935.2" font-family="Helvetica,sans-Serif" font-size="11.00">place_terms</text>
+<text text-anchor="middle" x="691" y="-1923.2" font-family="Helvetica,sans-Serif" font-size="11.00">context_clues</text>
+<text text-anchor="middle" x="691" y="-1911.2" font-family="Helvetica,sans-Serif" font-size="11.00">context_years</text>
 </g>
 <!-- analyze_form&#45;&gt;analyze_outputs -->
 <g id="edge37" class="edge">
 <title>analyze_form&#45;&gt;analyze_outputs</title>
-<path fill="none" stroke="#475569" d="M631.97,-2047.78C636.3,-2036.46 642.12,-2021.26 647.85,-2006.27"/>
-<polygon fill="#475569" stroke="#475569" points="650.27,-2006.82 650.48,-1999.4 645.69,-2005.07 650.27,-2006.82"/>
+<path fill="none" stroke="#475569" d="M635.46,-2047.78C642.01,-2036.36 650.83,-2020.99 659.51,-2005.86"/>
+<polygon fill="#475569" stroke="#475569" points="661.86,-2006.7 663.22,-1999.4 657.61,-2004.26 661.86,-2006.7"/>
 </g>
 <!-- build_plan -->
 <g id="node36" class="node">
 <title>build_plan</title>
-<path fill="#f8fafc" stroke="#94a3b8" d="M726,-1852C726,-1852 634,-1852 634,-1852 628,-1852 622,-1846 622,-1840 622,-1840 622,-1828 622,-1828 622,-1822 628,-1816 634,-1816 634,-1816 726,-1816 726,-1816 732,-1816 738,-1822 738,-1828 738,-1828 738,-1840 738,-1840 738,-1846 732,-1852 726,-1852"/>
-<text text-anchor="middle" x="680" y="-1831.2" font-family="Helvetica,sans-Serif" font-size="11.00">build_query_plan</text>
+<path fill="#f8fafc" stroke="#94a3b8" d="M743,-1852C743,-1852 651,-1852 651,-1852 645,-1852 639,-1846 639,-1840 639,-1840 639,-1828 639,-1828 639,-1822 645,-1816 651,-1816 651,-1816 743,-1816 743,-1816 749,-1816 755,-1822 755,-1828 755,-1828 755,-1840 755,-1840 755,-1846 749,-1852 743,-1852"/>
+<text text-anchor="middle" x="697" y="-1831.2" font-family="Helvetica,sans-Serif" font-size="11.00">build_query_plan</text>
 </g>
 <!-- analyze_outputs&#45;&gt;build_plan -->
 <g id="edge38" class="edge">
 <title>analyze_outputs&#45;&gt;build_plan</title>
-<path fill="none" stroke="#475569" d="M673.63,-1900.98C675.02,-1886.57 676.49,-1871.37 677.66,-1859.2"/>
-<polygon fill="#475569" stroke="#475569" points="680.12,-1859.25 678.36,-1852.05 675.24,-1858.78 680.12,-1859.25"/>
+<path fill="none" stroke="#475569" d="M693.53,-1900.98C694.29,-1886.57 695.09,-1871.37 695.73,-1859.2"/>
+<polygon fill="#475569" stroke="#475569" points="698.18,-1859.17 696.1,-1852.05 693.29,-1858.91 698.18,-1859.17"/>
 </g>
 <!-- specialized_search -->
 <g id="node37" class="node">
 <title>specialized_search</title>
-<path fill="#f8fafc" stroke="#94a3b8" d="M774.5,-1767C774.5,-1767 631.5,-1767 631.5,-1767 625.5,-1767 619.5,-1761 619.5,-1755 619.5,-1755 619.5,-1741 619.5,-1741 619.5,-1735 625.5,-1729 631.5,-1729 631.5,-1729 774.5,-1729 774.5,-1729 780.5,-1729 786.5,-1735 786.5,-1741 786.5,-1741 786.5,-1755 786.5,-1755 786.5,-1761 780.5,-1767 774.5,-1767"/>
-<text text-anchor="middle" x="703" y="-1751.2" font-family="Helvetica,sans-Serif" font-size="11.00">Special:Search ~2</text>
-<text text-anchor="middle" x="703" y="-1739.2" font-family="Helvetica,sans-Serif" font-size="11.00">w WikiHum i va.wiki.kul.pl</text>
+<path fill="#f8fafc" stroke="#94a3b8" d="M779.5,-1767C779.5,-1767 636.5,-1767 636.5,-1767 630.5,-1767 624.5,-1761 624.5,-1755 624.5,-1755 624.5,-1741 624.5,-1741 624.5,-1735 630.5,-1729 636.5,-1729 636.5,-1729 779.5,-1729 779.5,-1729 785.5,-1729 791.5,-1735 791.5,-1741 791.5,-1741 791.5,-1755 791.5,-1755 791.5,-1761 785.5,-1767 779.5,-1767"/>
+<text text-anchor="middle" x="708" y="-1751.2" font-family="Helvetica,sans-Serif" font-size="11.00">Special:Search ~2</text>
+<text text-anchor="middle" x="708" y="-1739.2" font-family="Helvetica,sans-Serif" font-size="11.00">w WikiHum i va.wiki.kul.pl</text>
 </g>
 <!-- build_plan&#45;&gt;specialized_search -->
 <g id="edge39" class="edge">
 <title>build_plan&#45;&gt;specialized_search</title>
-<path fill="none" stroke="#475569" d="M684.77,-1815.6C688.03,-1803.67 692.41,-1787.67 696.06,-1774.34"/>
-<polygon fill="#475569" stroke="#475569" points="698.52,-1774.65 698,-1767.25 693.79,-1773.36 698.52,-1774.65"/>
+<path fill="none" stroke="#475569" d="M699.28,-1815.6C700.84,-1803.67 702.94,-1787.67 704.68,-1774.34"/>
+<polygon fill="#475569" stroke="#475569" points="707.13,-1774.51 705.61,-1767.25 702.27,-1773.88 707.13,-1774.51"/>
 </g>
 <!-- specialized_filter -->
 <g id="node38" class="node">
 <title>specialized_filter</title>
-<path fill="#f8fafc" stroke="#94a3b8" d="M775.5,-1680C775.5,-1680 642.5,-1680 642.5,-1680 636.5,-1680 630.5,-1674 630.5,-1668 630.5,-1668 630.5,-1642 630.5,-1642 630.5,-1636 636.5,-1630 642.5,-1630 642.5,-1630 775.5,-1630 775.5,-1630 781.5,-1630 787.5,-1636 787.5,-1642 787.5,-1642 787.5,-1668 787.5,-1668 787.5,-1674 781.5,-1680 775.5,-1680"/>
-<text text-anchor="middle" x="709" y="-1664.2" font-family="Helvetica,sans-Serif" font-size="11.00">Filtrowanie po typie</text>
-<text text-anchor="middle" x="709" y="-1652.2" font-family="Helvetica,sans-Serif" font-size="11.00">persName / placeName</text>
-<text text-anchor="middle" x="709" y="-1640.2" font-family="Helvetica,sans-Serif" font-size="11.00">+ deduplikacja i ranking</text>
+<path fill="#f8fafc" stroke="#94a3b8" d="M777.5,-1680C777.5,-1680 644.5,-1680 644.5,-1680 638.5,-1680 632.5,-1674 632.5,-1668 632.5,-1668 632.5,-1642 632.5,-1642 632.5,-1636 638.5,-1630 644.5,-1630 644.5,-1630 777.5,-1630 777.5,-1630 783.5,-1630 789.5,-1636 789.5,-1642 789.5,-1642 789.5,-1668 789.5,-1668 789.5,-1674 783.5,-1680 777.5,-1680"/>
+<text text-anchor="middle" x="711" y="-1664.2" font-family="Helvetica,sans-Serif" font-size="11.00">Filtrowanie po typie</text>
+<text text-anchor="middle" x="711" y="-1652.2" font-family="Helvetica,sans-Serif" font-size="11.00">persName / placeName</text>
+<text text-anchor="middle" x="711" y="-1640.2" font-family="Helvetica,sans-Serif" font-size="11.00">+ deduplikacja i ranking</text>
 </g>
 <!-- specialized_search&#45;&gt;specialized_filter -->
 <g id="edge40" class="edge">
 <title>specialized_search&#45;&gt;specialized_filter</title>
-<path fill="none" stroke="#475569" d="M704.21,-1728.58C705,-1716.73 706.03,-1701.02 706.94,-1687.25"/>
-<polygon fill="#475569" stroke="#475569" points="709.38,-1687.41 707.4,-1680.26 704.5,-1687.08 709.38,-1687.41"/>
+<path fill="none" stroke="#475569" d="M708.61,-1728.58C708.99,-1716.84 709.51,-1701.31 709.96,-1687.63"/>
+<polygon fill="#475569" stroke="#475569" points="712.42,-1687.34 710.2,-1680.26 707.52,-1687.17 712.42,-1687.34"/>
 </g>
 <!-- specialized_decision -->
 <g id="node39" class="node">
 <title>specialized_decision</title>
-<path fill="#f8fafc" stroke="#94a3b8" d="M770,-1581C770,-1581 650,-1581 650,-1581 644,-1581 638,-1575 638,-1569 638,-1569 638,-1531 638,-1531 638,-1525 644,-1519 650,-1519 650,-1519 770,-1519 770,-1519 776,-1519 782,-1525 782,-1531 782,-1531 782,-1569 782,-1569 782,-1575 776,-1581 770,-1581"/>
-<text text-anchor="middle" x="710" y="-1565.2" font-family="Helvetica,sans-Serif" font-size="11.00">Gemini:</text>
-<text text-anchor="middle" x="710" y="-1553.2" font-family="Helvetica,sans-Serif" font-size="11.00">build_link_decision</text>
-<text text-anchor="middle" x="710" y="-1541.2" font-family="Helvetica,sans-Serif" font-size="11.00">(selected_url, reason,</text>
-<text text-anchor="middle" x="710" y="-1529.2" font-family="Helvetica,sans-Serif" font-size="11.00">matched_signals)</text>
+<path fill="#f8fafc" stroke="#94a3b8" d="M772,-1581C772,-1581 652,-1581 652,-1581 646,-1581 640,-1575 640,-1569 640,-1569 640,-1531 640,-1531 640,-1525 646,-1519 652,-1519 652,-1519 772,-1519 772,-1519 778,-1519 784,-1525 784,-1531 784,-1531 784,-1569 784,-1569 784,-1575 778,-1581 772,-1581"/>
+<text text-anchor="middle" x="712" y="-1565.2" font-family="Helvetica,sans-Serif" font-size="11.00">Gemini:</text>
+<text text-anchor="middle" x="712" y="-1553.2" font-family="Helvetica,sans-Serif" font-size="11.00">build_link_decision</text>
+<text text-anchor="middle" x="712" y="-1541.2" font-family="Helvetica,sans-Serif" font-size="11.00">(selected_url, reason,</text>
+<text text-anchor="middle" x="712" y="-1529.2" font-family="Helvetica,sans-Serif" font-size="11.00">matched_signals)</text>
 </g>
 <!-- specialized_filter&#45;&gt;specialized_decision -->
 <g id="edge41" class="edge">
 <title>specialized_filter&#45;&gt;specialized_decision</title>
-<path fill="none" stroke="#475569" d="M709.23,-1629.85C709.35,-1617.5 709.5,-1602.18 709.64,-1588.35"/>
-<polygon fill="#475569" stroke="#475569" points="712.09,-1588.29 709.71,-1581.27 707.19,-1588.25 712.09,-1588.29"/>
+<path fill="none" stroke="#475569" d="M711.23,-1629.85C711.35,-1617.5 711.5,-1602.18 711.64,-1588.35"/>
+<polygon fill="#475569" stroke="#475569" points="714.09,-1588.29 711.71,-1581.27 709.19,-1588.25 714.09,-1588.29"/>
 </g>
 <!-- specialized_selected -->
 <g id="node40" class="node">
@@ -607,8 +607,8 @@
 <!-- specialized_decision&#45;&gt;specialized_selected -->
 <g id="edge42" class="edge">
 <title>specialized_decision&#45;&gt;specialized_selected</title>
-<path fill="none" stroke="#475569" d="M710.78,-1518.83C711.11,-1506.13 711.5,-1491.11 711.86,-1477.22"/>
-<polygon fill="#475569" stroke="#475569" points="714.31,-1477.13 712.04,-1470.07 709.41,-1477 714.31,-1477.13"/>
+<path fill="none" stroke="#475569" d="M712.26,-1518.83C712.37,-1506.13 712.5,-1491.11 712.62,-1477.22"/>
+<polygon fill="#475569" stroke="#475569" points="715.07,-1477.09 712.68,-1470.07 710.17,-1477.05 715.07,-1477.09"/>
 </g>
 <!-- wikidata_retry -->
 <g id="node41" class="node">
@@ -635,9 +635,9 @@
 <!-- specialized_selected&#45;&gt;resolved -->
 <g id="edge43" class="edge">
 <title>specialized_selected&#45;&gt;resolved</title>
-<path fill="none" stroke="#475569" d="M790.43,-1410.17C918.15,-1375.8 1159,-1311 1159,-1311 1159,-1311 1159,-1311 1159,-876 1159,-876 1214.45,-793.94 1242.77,-752.03"/>
-<polygon fill="#475569" stroke="#475569" points="1244.85,-753.32 1246.74,-746.15 1240.79,-750.58 1244.85,-753.32"/>
-<text text-anchor="middle" x="1167" y="-1127.5" font-family="Helvetica,sans-Serif" font-size="10.00">tak</text>
+<path fill="none" stroke="#475569" d="M794.9,-1411.18C935.78,-1377.1 1209,-1311 1209,-1311 1209,-1311 1209,-1311 1209,-876 1209,-876 1236.38,-794.94 1250.62,-752.8"/>
+<polygon fill="#475569" stroke="#475569" points="1252.95,-753.56 1252.87,-746.15 1248.31,-752 1252.95,-753.56"/>
+<text text-anchor="middle" x="1217" y="-1127.5" font-family="Helvetica,sans-Serif" font-size="10.00">tak</text>
 </g>
 <!-- wikidata_filter -->
 <g id="node42" class="node">
@@ -683,7 +683,7 @@
 <title>plwiki_check</title>
 <path fill="#f8fafc" stroke="#94a3b8" d="M727.58,-923.32C727.58,-923.32 595.42,-880.68 595.42,-880.68 589.71,-878.84 589.71,-875.16 595.42,-873.32 595.42,-873.32 727.58,-830.68 727.58,-830.68 733.29,-828.84 744.71,-828.84 750.42,-830.68 750.42,-830.68 882.58,-873.32 882.58,-873.32 888.29,-875.16 888.29,-878.84 882.58,-880.68 882.58,-880.68 750.42,-923.32 750.42,-923.32 744.71,-925.16 733.29,-925.16 727.58,-923.32"/>
 <text text-anchor="middle" x="739" y="-886.2" font-family="Helvetica,sans-Serif" font-size="11.00">Czy uruchomić</text>
-<text text-anchor="middle" x="739" y="-874.2" font-family="Helvetica,sans-Serif" font-size="11.00">fallback plwiki?</text>
+<text text-anchor="middle" x="739" y="-874.2" font-family="Helvetica,sans-Serif" font-size="11.00">fallback Wikipedii?</text>
 <text text-anchor="middle" x="739" y="-862.2" font-family="Helvetica,sans-Serif" font-size="11.00">(tylko część persName)</text>
 </g>
 <!-- wikidata_selected&#45;&gt;plwiki_check -->
@@ -696,23 +696,23 @@
 <!-- wikidata_selected&#45;&gt;resolved -->
 <g id="edge48" class="edge">
 <title>wikidata_selected&#45;&gt;resolved</title>
-<path fill="none" stroke="#475569" d="M783,-997.02C833.35,-968.59 907,-927 907,-927 907,-927 1140,-792 1140,-792 1140,-792 1163,-784 1163,-784 1163,-784 1194.74,-765.49 1221.72,-749.75"/>
+<path fill="none" stroke="#475569" d="M783.4,-996.97C893.81,-935.02 1163,-784 1163,-784 1163,-784 1194.74,-765.49 1221.72,-749.75"/>
 <polygon fill="#475569" stroke="#475569" points="1223.28,-751.67 1228.1,-746.03 1220.82,-747.44 1223.28,-751.67"/>
-<text text-anchor="middle" x="1087" y="-874.5" font-family="Helvetica,sans-Serif" font-size="10.00">tak</text>
+<text text-anchor="middle" x="1090" y="-874.5" font-family="Helvetica,sans-Serif" font-size="10.00">tak</text>
 </g>
 <!-- plwiki_search -->
 <g id="node46" class="node">
 <title>plwiki_search</title>
-<path fill="#f8fafc" stroke="#94a3b8" d="M816.5,-746C816.5,-746 689.5,-746 689.5,-746 683.5,-746 677.5,-740 677.5,-734 677.5,-734 677.5,-720 677.5,-720 677.5,-714 683.5,-708 689.5,-708 689.5,-708 816.5,-708 816.5,-708 822.5,-708 828.5,-714 828.5,-720 828.5,-720 828.5,-734 828.5,-734 828.5,-740 822.5,-746 816.5,-746"/>
-<text text-anchor="middle" x="753" y="-730.2" font-family="Helvetica,sans-Serif" font-size="11.00">plwiki search API</text>
-<text text-anchor="middle" x="753" y="-718.2" font-family="Helvetica,sans-Serif" font-size="11.00">+ pageprops + extract</text>
+<path fill="#f8fafc" stroke="#94a3b8" d="M840,-746C840,-746 696,-746 696,-746 690,-746 684,-740 684,-734 684,-734 684,-720 684,-720 684,-714 690,-708 696,-708 696,-708 840,-708 840,-708 846,-708 852,-714 852,-720 852,-720 852,-734 852,-734 852,-740 846,-746 840,-746"/>
+<text text-anchor="middle" x="768" y="-730.2" font-family="Helvetica,sans-Serif" font-size="11.00">plwiki + enwiki search API</text>
+<text text-anchor="middle" x="768" y="-718.2" font-family="Helvetica,sans-Serif" font-size="11.00">+ pageprops + extract</text>
 </g>
 <!-- plwiki_check&#45;&gt;plwiki_search -->
 <g id="edge51" class="edge">
 <title>plwiki_check&#45;&gt;plwiki_search</title>
-<path fill="none" stroke="#475569" d="M743.51,-828.36C745.87,-803.37 748.67,-773.77 750.61,-753.22"/>
-<polygon fill="#475569" stroke="#475569" points="753.07,-753.29 751.29,-746.09 748.19,-752.83 753.07,-753.29"/>
-<text text-anchor="middle" x="754" y="-795" font-family="Helvetica,sans-Serif" font-size="10.00">tak</text>
+<path fill="none" stroke="#475569" d="M748.1,-829.58C753.06,-804.25 759.01,-773.89 763.1,-753"/>
+<polygon fill="#475569" stroke="#475569" points="765.53,-753.37 764.47,-746.03 760.72,-752.43 765.53,-753.37"/>
+<text text-anchor="middle" x="763" y="-795" font-family="Helvetica,sans-Serif" font-size="10.00">tak</text>
 </g>
 <!-- unresolved -->
 <g id="node51" class="node">
@@ -731,28 +731,28 @@
 <!-- plwiki_to_wikidata -->
 <g id="node47" class="node">
 <title>plwiki_to_wikidata</title>
-<path fill="#f8fafc" stroke="#94a3b8" d="M844.5,-640C844.5,-640 699.5,-640 699.5,-640 693.5,-640 687.5,-634 687.5,-628 687.5,-628 687.5,-614 687.5,-614 687.5,-608 693.5,-602 699.5,-602 699.5,-602 844.5,-602 844.5,-602 850.5,-602 856.5,-608 856.5,-614 856.5,-614 856.5,-628 856.5,-628 856.5,-634 850.5,-640 844.5,-640"/>
-<text text-anchor="middle" x="772" y="-624.2" font-family="Helvetica,sans-Serif" font-size="11.00">Konwersja do kandydatów</text>
-<text text-anchor="middle" x="772" y="-612.2" font-family="Helvetica,sans-Serif" font-size="11.00">Wikidata z leadem</text>
+<path fill="#f8fafc" stroke="#94a3b8" d="M856.5,-640C856.5,-640 711.5,-640 711.5,-640 705.5,-640 699.5,-634 699.5,-628 699.5,-628 699.5,-614 699.5,-614 699.5,-608 705.5,-602 711.5,-602 711.5,-602 856.5,-602 856.5,-602 862.5,-602 868.5,-608 868.5,-614 868.5,-614 868.5,-628 868.5,-628 868.5,-634 862.5,-640 856.5,-640"/>
+<text text-anchor="middle" x="784" y="-624.2" font-family="Helvetica,sans-Serif" font-size="11.00">Konwersja do kandydatów</text>
+<text text-anchor="middle" x="784" y="-612.2" font-family="Helvetica,sans-Serif" font-size="11.00">Wikidata z leadem</text>
 </g>
 <!-- plwiki_search&#45;&gt;plwiki_to_wikidata -->
 <g id="edge52" class="edge">
 <title>plwiki_search&#45;&gt;plwiki_to_wikidata</title>
-<path fill="none" stroke="#475569" d="M756.31,-707.88C759.37,-691.14 763.95,-666.08 767.37,-647.35"/>
-<polygon fill="#475569" stroke="#475569" points="769.82,-647.58 768.66,-640.26 765,-646.7 769.82,-647.58"/>
+<path fill="none" stroke="#475569" d="M770.79,-707.88C773.36,-691.14 777.22,-666.08 780.1,-647.35"/>
+<polygon fill="#475569" stroke="#475569" points="782.55,-647.55 781.19,-640.26 777.71,-646.8 782.55,-647.55"/>
 </g>
 <!-- plwiki_decision -->
 <g id="node48" class="node">
 <title>plwiki_decision</title>
-<path fill="#f8fafc" stroke="#94a3b8" d="M839.5,-524C839.5,-524 738.5,-524 738.5,-524 732.5,-524 726.5,-518 726.5,-512 726.5,-512 726.5,-498 726.5,-498 726.5,-492 732.5,-486 738.5,-486 738.5,-486 839.5,-486 839.5,-486 845.5,-486 851.5,-492 851.5,-498 851.5,-498 851.5,-512 851.5,-512 851.5,-518 845.5,-524 839.5,-524"/>
-<text text-anchor="middle" x="789" y="-508.2" font-family="Helvetica,sans-Serif" font-size="11.00">Gemini:</text>
-<text text-anchor="middle" x="789" y="-496.2" font-family="Helvetica,sans-Serif" font-size="11.00">build_link_decision</text>
+<path fill="#f8fafc" stroke="#94a3b8" d="M843.5,-524C843.5,-524 742.5,-524 742.5,-524 736.5,-524 730.5,-518 730.5,-512 730.5,-512 730.5,-498 730.5,-498 730.5,-492 736.5,-486 742.5,-486 742.5,-486 843.5,-486 843.5,-486 849.5,-486 855.5,-492 855.5,-498 855.5,-498 855.5,-512 855.5,-512 855.5,-518 849.5,-524 843.5,-524"/>
+<text text-anchor="middle" x="793" y="-508.2" font-family="Helvetica,sans-Serif" font-size="11.00">Gemini:</text>
+<text text-anchor="middle" x="793" y="-496.2" font-family="Helvetica,sans-Serif" font-size="11.00">build_link_decision</text>
 </g>
 <!-- plwiki_to_wikidata&#45;&gt;plwiki_decision -->
 <g id="edge53" class="edge">
 <title>plwiki_to_wikidata&#45;&gt;plwiki_decision</title>
-<path fill="none" stroke="#475569" d="M774.69,-601.94C777.52,-582.95 782,-552.94 785.19,-531.53"/>
-<polygon fill="#475569" stroke="#475569" points="787.65,-531.64 786.26,-524.36 782.81,-530.92 787.65,-531.64"/>
+<path fill="none" stroke="#475569" d="M785.43,-601.94C786.92,-582.95 789.29,-552.94 790.98,-531.53"/>
+<polygon fill="#475569" stroke="#475569" points="793.44,-531.53 791.55,-524.36 788.56,-531.14 793.44,-531.53"/>
 </g>
 <!-- selected_final -->
 <g id="node49" class="node">
@@ -764,22 +764,22 @@
 <!-- plwiki_decision&#45;&gt;selected_final -->
 <g id="edge54" class="edge">
 <title>plwiki_decision&#45;&gt;selected_final</title>
-<path fill="none" stroke="#475569" d="M790.57,-485.88C791.59,-474.08 792.97,-458.15 794.26,-443.22"/>
-<polygon fill="#475569" stroke="#475569" points="796.72,-443.18 794.89,-435.99 791.84,-442.75 796.72,-443.18"/>
+<path fill="none" stroke="#475569" d="M793.87,-485.88C794.43,-474.18 795.19,-458.42 795.9,-443.6"/>
+<polygon fill="#475569" stroke="#475569" points="798.36,-443.53 796.25,-436.42 793.47,-443.29 798.36,-443.53"/>
 </g>
 <!-- selected_final&#45;&gt;resolved -->
 <g id="edge55" class="edge">
 <title>selected_final&#45;&gt;resolved</title>
-<path fill="none" stroke="#475569" d="M826.37,-426.22C844.26,-442.76 864,-461 864,-461 864,-461 889,-486 889,-486 889,-486 1036,-659 1036,-659 1036,-659 1126.2,-686.1 1191.87,-705.83"/>
+<path fill="none" stroke="#475569" d="M827.73,-425.57C857.21,-450.92 898,-486 898,-486 898,-486 1036,-659 1036,-659 1036,-659 1126.2,-686.1 1191.87,-705.83"/>
 <polygon fill="#475569" stroke="#475569" points="1191.54,-708.29 1198.95,-707.96 1192.95,-703.6 1191.54,-708.29"/>
-<text text-anchor="middle" x="958" y="-551" font-family="Helvetica,sans-Serif" font-size="10.00">tak</text>
+<text text-anchor="middle" x="963" y="-551" font-family="Helvetica,sans-Serif" font-size="10.00">tak</text>
 </g>
 <!-- selected_final&#45;&gt;unresolved -->
 <g id="edge56" class="edge">
 <title>selected_final&#45;&gt;unresolved</title>
-<path fill="none" stroke="#475569" d="M819.98,-428.64C839.18,-453.65 864,-486 864,-486 864,-486 928,-684 928,-684 928,-684 954.94,-694.68 981.66,-705.26"/>
-<polygon fill="#475569" stroke="#475569" points="981.02,-707.64 988.43,-707.94 982.83,-703.09 981.02,-707.64"/>
-<text text-anchor="middle" x="895" y="-551" font-family="Helvetica,sans-Serif" font-size="10.00">nie</text>
+<path fill="none" stroke="#475569" d="M820.92,-428.16C841.34,-453.24 868,-486 868,-486 868,-486 990,-684 990,-684 990,-684 999.72,-693.28 1010.02,-703.11"/>
+<polygon fill="#475569" stroke="#475569" points="1008.33,-704.88 1015.08,-707.94 1011.71,-701.34 1008.33,-704.88"/>
+<text text-anchor="middle" x="920" y="-551" font-family="Helvetica,sans-Serif" font-size="10.00">nie</text>
 </g>
 <!-- resolved&#45;&gt;next_entity -->
 <g id="edge58" class="edge">
@@ -803,81 +803,81 @@
 <!-- build_final_tei -->
 <g id="node53" class="node">
 <title>build_final_tei</title>
-<path fill="#f8fafc" stroke="#94a3b8" d="M1246,-524C1246,-524 1140,-524 1140,-524 1134,-524 1128,-518 1128,-512 1128,-512 1128,-498 1128,-498 1128,-492 1134,-486 1140,-486 1140,-486 1246,-486 1246,-486 1252,-486 1258,-492 1258,-498 1258,-498 1258,-512 1258,-512 1258,-518 1252,-524 1246,-524"/>
-<text text-anchor="middle" x="1193" y="-508.2" font-family="Helvetica,sans-Serif" font-size="11.00">serialize_inner_xml</text>
-<text text-anchor="middle" x="1193" y="-496.2" font-family="Helvetica,sans-Serif" font-size="11.00">+ build_full_tei_xml</text>
+<path fill="#f8fafc" stroke="#94a3b8" d="M1208,-524C1208,-524 1102,-524 1102,-524 1096,-524 1090,-518 1090,-512 1090,-512 1090,-498 1090,-498 1090,-492 1096,-486 1102,-486 1102,-486 1208,-486 1208,-486 1214,-486 1220,-492 1220,-498 1220,-498 1220,-512 1220,-512 1220,-518 1214,-524 1208,-524"/>
+<text text-anchor="middle" x="1155" y="-508.2" font-family="Helvetica,sans-Serif" font-size="11.00">serialize_inner_xml</text>
+<text text-anchor="middle" x="1155" y="-496.2" font-family="Helvetica,sans-Serif" font-size="11.00">+ build_full_tei_xml</text>
 </g>
 <!-- next_entity&#45;&gt;build_final_tei -->
 <g id="edge61" class="edge">
 <title>next_entity&#45;&gt;build_final_tei</title>
-<path fill="none" stroke="#475569" d="M1194.35,-582.99C1194.05,-566 1193.71,-546.31 1193.44,-531.09"/>
-<polygon fill="#475569" stroke="#475569" points="1195.89,-530.96 1193.32,-524.01 1190.99,-531.05 1195.89,-530.96"/>
-<text text-anchor="middle" x="1201" y="-551" font-family="Helvetica,sans-Serif" font-size="10.00">nie</text>
+<path fill="none" stroke="#475569" d="M1183,-585.8C1176.85,-568.28 1169.5,-547.32 1163.87,-531.28"/>
+<polygon fill="#475569" stroke="#475569" points="1166.05,-530.08 1161.42,-524.29 1161.42,-531.7 1166.05,-530.08"/>
+<text text-anchor="middle" x="1180" y="-551" font-family="Helvetica,sans-Serif" font-size="10.00">nie</text>
 </g>
 <!-- sort_outputs -->
 <g id="node54" class="node">
 <title>sort_outputs</title>
-<path fill="#f8fafc" stroke="#94a3b8" d="M1161,-424C1161,-424 1053,-424 1053,-424 1047,-424 1041,-418 1041,-412 1041,-412 1041,-386 1041,-386 1041,-380 1047,-374 1053,-374 1053,-374 1161,-374 1161,-374 1167,-374 1173,-380 1173,-386 1173,-386 1173,-412 1173,-412 1173,-418 1167,-424 1161,-424"/>
-<text text-anchor="middle" x="1107" y="-408.2" font-family="Helvetica,sans-Serif" font-size="11.00">Sortowanie lists:</text>
-<text text-anchor="middle" x="1107" y="-396.2" font-family="Helvetica,sans-Serif" font-size="11.00">entities</text>
-<text text-anchor="middle" x="1107" y="-384.2" font-family="Helvetica,sans-Serif" font-size="11.00">unresolved_entities</text>
+<path fill="#f8fafc" stroke="#94a3b8" d="M1092,-424C1092,-424 984,-424 984,-424 978,-424 972,-418 972,-412 972,-412 972,-386 972,-386 972,-380 978,-374 984,-374 984,-374 1092,-374 1092,-374 1098,-374 1104,-380 1104,-386 1104,-386 1104,-412 1104,-412 1104,-418 1098,-424 1092,-424"/>
+<text text-anchor="middle" x="1038" y="-408.2" font-family="Helvetica,sans-Serif" font-size="11.00">Sortowanie lists:</text>
+<text text-anchor="middle" x="1038" y="-396.2" font-family="Helvetica,sans-Serif" font-size="11.00">entities</text>
+<text text-anchor="middle" x="1038" y="-384.2" font-family="Helvetica,sans-Serif" font-size="11.00">unresolved_entities</text>
 </g>
 <!-- build_final_tei&#45;&gt;sort_outputs -->
 <g id="edge62" class="edge">
 <title>build_final_tei&#45;&gt;sort_outputs</title>
-<path fill="none" stroke="#475569" d="M1178.02,-485.88C1165.2,-470.38 1146.49,-447.75 1131.49,-429.62"/>
-<polygon fill="#475569" stroke="#475569" points="1133.32,-427.98 1126.97,-424.15 1129.54,-431.1 1133.32,-427.98"/>
+<path fill="none" stroke="#475569" d="M1134.62,-485.88C1116.95,-470.18 1091.06,-447.17 1070.53,-428.92"/>
+<polygon fill="#475569" stroke="#475569" points="1072.02,-426.97 1065.16,-424.15 1068.77,-430.63 1072.02,-426.97"/>
 </g>
 <!-- finish_job -->
 <g id="node55" class="node">
 <title>finish_job</title>
-<path fill="#dcfce7" stroke="#16a34a" d="M1123.5,-312C1123.5,-312 1000.5,-312 1000.5,-312 994.5,-312 988.5,-306 988.5,-300 988.5,-300 988.5,-262 988.5,-262 988.5,-256 994.5,-250 1000.5,-250 1000.5,-250 1123.5,-250 1123.5,-250 1129.5,-250 1135.5,-256 1135.5,-262 1135.5,-262 1135.5,-300 1135.5,-300 1135.5,-306 1129.5,-312 1123.5,-312"/>
-<text text-anchor="middle" x="1062" y="-296.2" font-family="Helvetica,sans-Serif" font-size="11.00">Zapis wyniku zadania:</text>
-<text text-anchor="middle" x="1062" y="-284.2" font-family="Helvetica,sans-Serif" font-size="11.00">status=done</text>
-<text text-anchor="middle" x="1062" y="-272.2" font-family="Helvetica,sans-Serif" font-size="11.00">result_json</text>
-<text text-anchor="middle" x="1062" y="-260.2" font-family="Helvetica,sans-Serif" font-size="11.00">diagnostic_log_file</text>
+<path fill="#dcfce7" stroke="#16a34a" d="M1092.5,-312C1092.5,-312 969.5,-312 969.5,-312 963.5,-312 957.5,-306 957.5,-300 957.5,-300 957.5,-262 957.5,-262 957.5,-256 963.5,-250 969.5,-250 969.5,-250 1092.5,-250 1092.5,-250 1098.5,-250 1104.5,-256 1104.5,-262 1104.5,-262 1104.5,-300 1104.5,-300 1104.5,-306 1098.5,-312 1092.5,-312"/>
+<text text-anchor="middle" x="1031" y="-296.2" font-family="Helvetica,sans-Serif" font-size="11.00">Zapis wyniku zadania:</text>
+<text text-anchor="middle" x="1031" y="-284.2" font-family="Helvetica,sans-Serif" font-size="11.00">status=done</text>
+<text text-anchor="middle" x="1031" y="-272.2" font-family="Helvetica,sans-Serif" font-size="11.00">result_json</text>
+<text text-anchor="middle" x="1031" y="-260.2" font-family="Helvetica,sans-Serif" font-size="11.00">diagnostic_log_file</text>
 </g>
 <!-- sort_outputs&#45;&gt;finish_job -->
 <g id="edge63" class="edge">
 <title>sort_outputs&#45;&gt;finish_job</title>
-<path fill="none" stroke="#475569" d="M1097.68,-373.96C1091.54,-358.15 1083.38,-337.13 1076.42,-319.17"/>
-<polygon fill="#475569" stroke="#475569" points="1078.53,-317.85 1073.72,-312.21 1073.97,-319.62 1078.53,-317.85"/>
+<path fill="none" stroke="#475569" d="M1036.55,-373.96C1035.6,-358.29 1034.35,-337.5 1033.27,-319.65"/>
+<polygon fill="#475569" stroke="#475569" points="1035.69,-319.05 1032.82,-312.21 1030.8,-319.34 1035.69,-319.05"/>
 </g>
 <!-- identify_response -->
 <g id="node56" class="node">
 <title>identify_response</title>
-<path fill="#e0f2fe" stroke="#0284c7" d="M1131,-201C1131,-201 941,-201 941,-201 935,-201 929,-195 929,-189 929,-189 929,-127 929,-127 929,-121 935,-115 941,-115 941,-115 1131,-115 1131,-115 1137,-115 1143,-121 1143,-127 1143,-127 1143,-189 1143,-189 1143,-195 1137,-201 1131,-201"/>
-<text text-anchor="middle" x="1036" y="-185.2" font-family="Helvetica,sans-Serif" font-size="11.00">GET /identify/jobs/&lt;job_id&gt;/result:</text>
-<text text-anchor="middle" x="1036" y="-173.2" font-family="Helvetica,sans-Serif" font-size="11.00">xml</text>
-<text text-anchor="middle" x="1036" y="-161.2" font-family="Helvetica,sans-Serif" font-size="11.00">entities</text>
-<text text-anchor="middle" x="1036" y="-149.2" font-family="Helvetica,sans-Serif" font-size="11.00">unresolved_entities</text>
-<text text-anchor="middle" x="1036" y="-137.2" font-family="Helvetica,sans-Serif" font-size="11.00">identification_performed=true</text>
-<text text-anchor="middle" x="1036" y="-125.2" font-family="Helvetica,sans-Serif" font-size="11.00">diagnostic_log_file</text>
+<path fill="#e0f2fe" stroke="#0284c7" d="M1122,-201C1122,-201 932,-201 932,-201 926,-201 920,-195 920,-189 920,-189 920,-127 920,-127 920,-121 926,-115 932,-115 932,-115 1122,-115 1122,-115 1128,-115 1134,-121 1134,-127 1134,-127 1134,-189 1134,-189 1134,-195 1128,-201 1122,-201"/>
+<text text-anchor="middle" x="1027" y="-185.2" font-family="Helvetica,sans-Serif" font-size="11.00">GET /identify/jobs/&lt;job_id&gt;/result:</text>
+<text text-anchor="middle" x="1027" y="-173.2" font-family="Helvetica,sans-Serif" font-size="11.00">xml</text>
+<text text-anchor="middle" x="1027" y="-161.2" font-family="Helvetica,sans-Serif" font-size="11.00">entities</text>
+<text text-anchor="middle" x="1027" y="-149.2" font-family="Helvetica,sans-Serif" font-size="11.00">unresolved_entities</text>
+<text text-anchor="middle" x="1027" y="-137.2" font-family="Helvetica,sans-Serif" font-size="11.00">identification_performed=true</text>
+<text text-anchor="middle" x="1027" y="-125.2" font-family="Helvetica,sans-Serif" font-size="11.00">diagnostic_log_file</text>
 </g>
 <!-- finish_job&#45;&gt;identify_response -->
 <g id="edge64" class="edge">
 <title>finish_job&#45;&gt;identify_response</title>
-<path fill="none" stroke="#475569" d="M1055.51,-249.78C1052.79,-237.15 1049.57,-222.14 1046.53,-208"/>
-<polygon fill="#475569" stroke="#475569" points="1048.92,-207.48 1045.06,-201.15 1044.13,-208.51 1048.92,-207.48"/>
+<path fill="none" stroke="#475569" d="M1030,-249.78C1029.59,-237.26 1029.1,-222.41 1028.63,-208.39"/>
+<polygon fill="#475569" stroke="#475569" points="1031.07,-208.06 1028.39,-201.15 1026.18,-208.23 1031.07,-208.06"/>
 </g>
 <!-- ui_output -->
 <g id="node57" class="node">
 <title>ui_output</title>
-<path fill="#e0f2fe" stroke="#0284c7" d="M1102.5,-66C1102.5,-66 943.5,-66 943.5,-66 937.5,-66 931.5,-60 931.5,-54 931.5,-54 931.5,-28 931.5,-28 931.5,-22 937.5,-16 943.5,-16 943.5,-16 1102.5,-16 1102.5,-16 1108.5,-16 1114.5,-22 1114.5,-28 1114.5,-28 1114.5,-54 1114.5,-54 1114.5,-60 1108.5,-66 1102.5,-66"/>
-<text text-anchor="middle" x="1023" y="-50.2" font-family="Helvetica,sans-Serif" font-size="11.00">UI: kod XML, podgląd tekstu,</text>
-<text text-anchor="middle" x="1023" y="-38.2" font-family="Helvetica,sans-Serif" font-size="11.00">lista encji, przyciski logu,</text>
-<text text-anchor="middle" x="1023" y="-26.2" font-family="Helvetica,sans-Serif" font-size="11.00">pobieranie XML/logu</text>
+<path fill="#e0f2fe" stroke="#0284c7" d="M1097.5,-66C1097.5,-66 938.5,-66 938.5,-66 932.5,-66 926.5,-60 926.5,-54 926.5,-54 926.5,-28 926.5,-28 926.5,-22 932.5,-16 938.5,-16 938.5,-16 1097.5,-16 1097.5,-16 1103.5,-16 1109.5,-22 1109.5,-28 1109.5,-28 1109.5,-54 1109.5,-54 1109.5,-60 1103.5,-66 1097.5,-66"/>
+<text text-anchor="middle" x="1018" y="-50.2" font-family="Helvetica,sans-Serif" font-size="11.00">UI: kod XML, podgląd tekstu,</text>
+<text text-anchor="middle" x="1018" y="-38.2" font-family="Helvetica,sans-Serif" font-size="11.00">lista encji, przyciski logu,</text>
+<text text-anchor="middle" x="1018" y="-26.2" font-family="Helvetica,sans-Serif" font-size="11.00">pobieranie XML/logu</text>
 </g>
 <!-- identify_response&#45;&gt;ui_output -->
 <g id="edge65" class="edge">
 <title>identify_response&#45;&gt;ui_output</title>
-<path fill="none" stroke="#475569" d="M1031.23,-114.83C1029.68,-101.11 1027.99,-86.14 1026.54,-73.36"/>
-<polygon fill="#475569" stroke="#475569" points="1028.95,-72.79 1025.73,-66.11 1024.08,-73.34 1028.95,-72.79"/>
+<path fill="none" stroke="#475569" d="M1023.7,-114.83C1022.63,-101.11 1021.45,-86.14 1020.45,-73.36"/>
+<polygon fill="#475569" stroke="#475569" points="1022.88,-72.9 1019.89,-66.11 1017.99,-73.28 1022.88,-72.9"/>
 </g>
 <!-- ui_output&#45;&gt;export_pdf -->
 <g id="edge18" class="edge">
 <title>ui_output&#45;&gt;export_pdf</title>
-<path fill="none" stroke="#475569" d="M931.22,-53.77C702.61,-83.08 126,-157 126,-157 126,-2541 126,-2541 126,-2541 126,-2541 118.65,-2585.85 113.1,-2619.77"/>
+<path fill="none" stroke="#475569" d="M926.32,-53.82C698.69,-83.17 126,-157 126,-157 126,-2541 126,-2541 126,-2541 126,-2541 118.65,-2585.85 113.1,-2619.77"/>
 <polygon fill="#475569" stroke="#475569" points="110.66,-2619.52 111.94,-2626.83 115.49,-2620.31 110.66,-2619.52"/>
 <text text-anchor="middle" x="174.5" y="-1362" font-family="Helvetica,sans-Serif" font-size="10.00">PDF po identyfikacji</text>
 </g>

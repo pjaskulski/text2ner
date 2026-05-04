@@ -36,7 +36,7 @@ digraph text2ner_process_simple {
     manual [label="5. Opcjonalna korekta ręczna\nMożna usunąć tag,\nzmienić jego typ albo dodać nowy"];
     pdf_before [label="6. Eksport PDF podglądu\nMożna pobrać kolorowy podgląd\naktualnego tekstu i oznaczeń", fillcolor="#FEF3C7", color="#D97706"];
     identify [label="7. Identyfikacja encji jako zadanie w tle\nAplikacja przyjmuje XML do kolejki\ni pokazuje pasek postępu"];
-    sources [label="8. Wyszukiwanie kandydatów\nw WikiHum, va.wiki.kul.pl,\njeżeli nieskuteczna -> Wikidata i w polskiej Wikipedii"];
+    sources [label="8. Wyszukiwanie kandydatów\nw WikiHum, va.wiki.kul.pl,\njeżeli nieskuteczna -> Wikidata\noraz polska i angielska Wikipedia"];
     decision [label="9. Ocena kandydatów\nModel Gemini porównuje kontekst,\nwarianty nazwy (dla osób\nrównież zgodność chronologiczną)"];
     result [label="10. Wynik końcowy\nTEI-XML z wyróżnieniem osób, miejsc i ich identyfikacją", fillcolor="#DCFCE7", color="#16A34A"];
     lists [label="11. Dodatkowe wyniki:\nLista encji (osób i miejsc) zidentyfikowanych\ni niezidentyfikowanych"];

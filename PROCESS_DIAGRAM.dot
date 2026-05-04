@@ -96,8 +96,8 @@ digraph text2ner_process {
         wikidata_decision [label="Gemini:\nbuild_link_decision"];
         wikidata_selected [shape=diamond, label="Czy wybrano kandydata\nz Wikidaty?"];
 
-        plwiki_check [shape=diamond, label="Czy uruchomić\nfallback plwiki?\n(tylko część persName)"];
-        plwiki_search [label="plwiki search API\n+ pageprops + extract"];
+        plwiki_check [shape=diamond, label="Czy uruchomić\nfallback Wikipedii?\n(tylko część persName)"];
+        plwiki_search [label="plwiki + enwiki search API\n+ pageprops + extract"];
         plwiki_to_wikidata [label="Konwersja do kandydatów\nWikidata z leadem"];
         plwiki_decision [label="Gemini:\nbuild_link_decision"];
         selected_final [shape=diamond, label="Czy wybrano\nkandydata?"];
