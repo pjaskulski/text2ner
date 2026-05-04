@@ -1290,63 +1290,6 @@ def recognize():
         stop_diagnostic_session()
 
 
-@app.route('/identify', methods=['POST'])
-@requires_auth
-def identify():
-    """Identyfikuje `persName` i `placeName` w istniejącym TEI-XML."""
-    diagnostic_log_path = None
-    model_token = None
-    try:
-      diagnostic_log_path = start_diagnostic_session(log_dir="log")
-      xml_payload = request.json.get('xml', '')
-      progress_id = normalize_whitespace(request.json.get('progress_id', ''))
-      update_progress(
-          progress_id,
-          status="running",
-          current=0,
-          total=0,
-          message="Rozpoczynam identyfikację encji.",
-      )
-      selected_model = normalize_gemini_model_name(
-          request.json.get('model_name', DEFAULT_GEMINI_MODEL)
-      )
-      model_token = set_current_gemini_model(selected_model)
-      diagnostic_log(f"Uruchomiono /identify dla XML o długości {len(xml_payload)} znaków.")
-      diagnostic_log(f"Model Gemini dla /identify: {selected_model}")
-
-      full_tei_xml, entities, unresolved_entities = identify_entities_in_tei(
-          xml_payload,
-          progress_id=progress_id,
-      )
-      update_progress(
-          progress_id,
-          status="done",
-          message="Identyfikacja zakończona.",
-      )
-
-      return jsonify({
-          "xml": full_tei_xml,
-          "entities": entities,
-          "unresolved_entities": unresolved_entities,
-          "identification_performed": True,
-          "model_name": selected_model,
-          "diagnostic_log_file": diagnostic_log_path
-      })
-
-    except Exception as e:
-        diagnostic_log(f"Błąd krytyczny w /identify: {e}")
-        print(f"Błąd krytyczny w /identify: {e}")
-        update_progress(
-            normalize_whitespace((request.json or {}).get('progress_id', '')),
-            status="error",
-            message=str(e),
-        )
-        return jsonify({"error": str(e)}), 500
-    finally:
-        reset_current_gemini_model(model_token)
-        stop_diagnostic_session()
-
-
 @app.route('/identify/jobs', methods=['POST'])
 @requires_auth
 def create_identify_job_route():
@@ -1408,49 +1351,6 @@ def identify_progress(progress_id):
             "message": "Oczekuję na rozpoczęcie identyfikacji.",
         })
     return jsonify(progress)
-
-
-@app.route('/process', methods=['POST'])
-@requires_auth
-def process():
-    """Zachowuje zgodność wsteczną: rozpoznaje i od razu identyfikuje encje."""
-    diagnostic_log_path = None
-    model_token = None
-    try:
-      diagnostic_log_path = start_diagnostic_session(log_dir="log")
-      raw_text = request.json.get('text', '')[:5000]
-      enabled_tag_types = normalize_enabled_tag_types(
-          request.json.get('tag_types', list(DEFAULT_ENABLED_TAG_TYPES))
-      )
-      selected_model = normalize_gemini_model_name(
-          request.json.get('model_name', DEFAULT_GEMINI_MODEL)
-      )
-      model_token = set_current_gemini_model(selected_model)
-      if not enabled_tag_types:
-          raise ValueError("Wybierz co najmniej jeden typ tagu do rozpoznawania encji.")
-      diagnostic_log(f"Uruchomiono /process dla tekstu o długości {len(raw_text)} znaków.")
-      diagnostic_log(f"Włączone tagi rozpoznawania w /process: {enabled_tag_types}")
-      diagnostic_log(f"Model Gemini dla /process: {selected_model}")
-
-      full_tei_xml = recognize_text_to_tei(raw_text, enabled_tag_types=enabled_tag_types)
-      full_tei_xml, entities, unresolved_entities = identify_entities_in_tei(full_tei_xml)
-
-      return jsonify({
-          "xml": full_tei_xml,
-          "entities": entities,
-          "unresolved_entities": unresolved_entities,
-          "identification_performed": True,
-          "model_name": selected_model,
-          "diagnostic_log_file": diagnostic_log_path
-      })
-
-    except Exception as e:
-        diagnostic_log(f"Błąd krytyczny w /process: {e}")
-        print(f"Błąd krytyczny w /process: {e}")
-        return jsonify({"error": str(e)}), 500
-    finally:
-        reset_current_gemini_model(model_token)
-        stop_diagnostic_session()
 
 
 @app.route('/diagnostic-log/download', methods=['GET'])

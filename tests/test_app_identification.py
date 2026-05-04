@@ -215,5 +215,14 @@ class IdentifyJobStoreTest(unittest.TestCase):
         self.assertEqual(job["entity_type"], "placeName")
 
 
+class LegacyRouteRemovalTest(unittest.TestCase):
+    def test_synchronous_identification_routes_are_not_registered(self):
+        routes = {rule.rule for rule in app.app.url_map.iter_rules()}
+
+        self.assertNotIn("/identify", routes)
+        self.assertNotIn("/process", routes)
+        self.assertIn("/identify/jobs", routes)
+
+
 if __name__ == "__main__":
     unittest.main()

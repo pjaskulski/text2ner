@@ -280,14 +280,13 @@ Projekt korzysta z bibliotek wymienionych w `requirements.txt`, w tym:
 
 ## Architektura identyfikacji i postępu
 
-Nowsza wersja procesu identyfikacji rozdziela rozpoczęcie zadania, monitorowanie postępu i pobranie wyniku:
+Proces identyfikacji rozdziela rozpoczęcie zadania, monitorowanie postępu i pobranie wyniku:
 
 - `/identify/jobs` przyjmuje XML i tworzy zadanie identyfikacji w SQLite,
 - wątek `text2ner-identify-worker` pobiera najstarsze oczekujące zadanie i wykonuje `identify_entities_in_tei(...)`,
 - `/identify/jobs/<job_id>` zwraca status, licznik postępu, komunikat i aktualnie przetwarzaną encję,
 - `/identify/jobs/<job_id>/result` zwraca wynik dopiero po zakończeniu zadania,
-- `/identify/progress/<progress_id>` pozostaje endpointem do odczytu stanu postępu zapisywanego przez `update_progress(...)`,
-- `/identify` pozostaje dostępne dla zgodności wstecznej jako identyfikacja synchroniczna.
+- `/identify/progress/<progress_id>` jest pomocniczym endpointem do odczytu stanu postępu zapisywanego przez `update_progress(...)`.
 
 Domyślne ścieżki i czasy przechowywania można zmienić zmiennymi środowiskowymi:
 
