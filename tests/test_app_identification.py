@@ -1,3 +1,4 @@
+import base64
 import os
 import unittest
 import tempfile
@@ -222,6 +223,26 @@ class LegacyRouteRemovalTest(unittest.TestCase):
         self.assertNotIn("/identify", routes)
         self.assertNotIn("/process", routes)
         self.assertIn("/identify/jobs", routes)
+
+
+class IndexModelConfigTest(unittest.TestCase):
+    def test_index_renders_gemini_models_from_backend_config(self):
+        credentials = base64.b64encode(b"user:pass").decode("ascii")
+        headers = {"Authorization": f"Basic {credentials}"}
+
+        with patch.object(app, "APP_USER", "user"), \
+                patch.object(app, "APP_PASSWORD", "pass"):
+            response = app.app.test_client().get("/", headers=headers)
+
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        for model_name, model_label in app.SUPPORTED_GEMINI_MODELS.items():
+            self.assertIn(f'value="{model_name}"', html)
+            self.assertIn(model_label, html)
+        self.assertIn(
+            f'const DEFAULT_GEMINI_MODEL = "{app.DEFAULT_GEMINI_MODEL}"',
+            html,
+        )
 
 
 if __name__ == "__main__":

@@ -409,8 +409,9 @@
                     <label for="modelSelect" class="block text-sm font-semibold text-gray-800 mb-2">Model Gemini</label>
                     <select id="modelSelect"
                         class="w-full p-2.5 border rounded-lg bg-gray-50 text-sm outline-none focus:ring-2 focus:ring-blue-500">
-                        <option value="gemini-3.1-flash-lite-preview">Gemini 3.1 Flash Lite Preview</option>
-                        <option value="gemini-3-flash-preview">Gemini 3 Flash Preview</option>
+                        {% for model in gemini_models %}
+                        <option value="{{ model.value }}" {% if model.value == default_gemini_model %}selected{% endif %}>{{ model.label }}</option>
+                        {% endfor %}
                     </select>
                 </div>
                 <p class="text-sm text-gray-500">Zmiany zostaną użyte przy następnym uruchomieniu rozpoznawania oraz identyfikacji encji.</p>
@@ -568,7 +569,7 @@
     <script>
         const EDITABLE_TAG_TYPES = ['persName', 'placeName', 'orgName', 'roleName', 'date'];
         const DEFAULT_ENABLED_RECOGNITION_TAG_TYPES = ['persName', 'placeName', 'date', 'roleName'];
-        const DEFAULT_GEMINI_MODEL = 'gemini-3.1-flash-lite-preview';
+        const DEFAULT_GEMINI_MODEL = {{ default_gemini_model|tojson }};
         const IDENTIFY_PROGRESS_URL_TEMPLATE = "{{ url_for('identify_progress', progress_id='__PROGRESS_ID__') }}";
         const IDENTIFY_JOBS_URL = "{{ url_for('create_identify_job_route') }}";
         const IDENTIFY_JOB_STATUS_URL_TEMPLATE = "{{ url_for('get_identify_job_route', job_id='__JOB_ID__') }}";
@@ -581,10 +582,7 @@
             { value: 'roleName', label: 'Funkcje i urzędy' },
             { value: 'orgName', label: 'Instytucje' },
         ];
-        const MODEL_SETTINGS_OPTIONS = [
-            { value: 'gemini-3.1-flash-lite-preview', label: 'Gemini 3.1 Flash Lite Preview' },
-            { value: 'gemini-3-flash-preview', label: 'Gemini 3 Flash Preview' },
-        ];
+        const MODEL_SETTINGS_OPTIONS = {{ gemini_models|tojson }};
         let currentXmlDoc = null;
         let currentXmlHasDeclaration = true;
         let currentIdentificationPerformed = false;

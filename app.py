@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 from names_linking import (
     DEFAULT_ENABLED_TAG_TYPES,
     DEFAULT_GEMINI_MODEL,
+    SUPPORTED_GEMINI_MODELS,
     diagnostic_log,
     extract_years_from_text,
     get_editable_dictionary_definitions,
@@ -1246,7 +1247,15 @@ def identify_entities_in_tei(xml_payload, progress_id=None):
 @requires_auth
 def index():
     """Renderuje główny interfejs aplikacji."""
-    return render_template('index.html')
+    gemini_models = [
+        {"value": model_name, "label": model_label}
+        for model_name, model_label in SUPPORTED_GEMINI_MODELS.items()
+    ]
+    return render_template(
+        'index.html',
+        default_gemini_model=DEFAULT_GEMINI_MODEL,
+        gemini_models=gemini_models,
+    )
 
 @app.route('/recognize', methods=['POST'])
 @requires_auth
