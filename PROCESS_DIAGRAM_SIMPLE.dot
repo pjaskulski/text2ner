@@ -29,21 +29,27 @@ digraph text2ner_process_simple {
         fontsize=10
     ];
 
-    start [label="1. Dokument do analizy wprowadzony do pola tekstowego (do 5000 znaków)", fillcolor="#E0F2FE", color="#0284C7"];
-    settings [label="2. Parametry analizy:\nmodel Gemini oraz typy tagów,\nktóre mają być rozpoznawane"];
-    recognize [label="3. Funkcja Rozpoznaj encje\nAplikacja tworzy TEI-XML\ni oznacza osoby, miejsca,\ndaty, funkcje i instytucje (tagi zależnie od ustawień)"];
-    preview [label="4. Podgląd wyniku\nUżytkownik ogląda XML\nlub kolorowany podgląd tekstu"];
-    manual [label="5. Opcjonalna korekta ręczna\nMożna usunąć tag,\nzmienić jego typ albo dodać nowy"];
-    pdf_before [label="6. Eksport PDF podglądu\nMożna pobrać kolorowy podgląd\naktualnego tekstu i oznaczeń", fillcolor="#FEF3C7", color="#D97706"];
-    identify [label="7. Identyfikacja encji jako zadanie w tle\nAplikacja przyjmuje XML do kolejki\ni pokazuje pasek postępu"];
-    sources [label="8. Wyszukiwanie kandydatów\nw WikiHum, va.wiki.kul.pl,\njeżeli nieskuteczna -> Wikidata\noraz polska i angielska Wikipedia"];
-    decision [label="9. Ocena kandydatów\nModel Gemini porównuje kontekst,\nwarianty nazwy (dla osób\nrównież zgodność chronologiczną)"];
-    result [label="10. Wynik końcowy\nTEI-XML z wyróżnieniem osób, miejsc i ich identyfikacją", fillcolor="#DCFCE7", color="#16A34A"];
-    lists [label="11. Dodatkowe wyniki:\nLista encji (osób i miejsc) zidentyfikowanych\ni niezidentyfikowanych"];
-    pdf_after [label="12. Eksport PDF po identyfikacji\nPodgląd zawiera także listy encji"];
-    log [label="13. Log diagnostyczny\nMożna pobrać pełny log\nlub obejrzeć fragment\ndla konkretnej encji", fillcolor="#FEF3C7", color="#D97706"];
+    start [label="1. Tekst do analizy wprowadzony do pola tekstowego (do 5000 znaków)", fillcolor="#E0F2FE", color="#0284C7"];
+    settings [label="2. Parametry analizy:\nmodel Gemini oraz typy tagów,\nktóre mają być rozpoznawane\n (persName, placeName, roleName, date, orgName)"];
+    recognize [label="3. Funkcja Rozpoznaj \nAplikacja oznacza osoby, miejsca,\ndaty, funkcje i instytucje (tagi zależnie od ustawień)\n tworzy zapis w formacie TEI-XML"];
+    preview [label="4. Użytkownik może obejrzeć XML\nlub kolorowany podgląd tekstu"];
+    manual [label="5. Podgląd umożliwia korektę tagów\nMożna usunąć tag,\nzmienić jego typ albo dodać nowy"];
+    identify [label="6. Rozpoznane encje typu persName lub placeName\n można zidentyfikować w bazach referencyjnych\nAplikacja określa formę podstawową nazwy,\n analizuje kontekst wystąpienia encji\n (np. informacje o urzędzie, funkcji dla osoby,\n lub infromacje lokalizacyjne dla miejsc)"];
+    sources [label="7. Wyszukiwanie kandydatów\nw WikiHum i va.wiki.kul.pl"];
+    decision [label="8. Ocena kandydatów\nModel Gemini porównuje kontekst,\nwarianty nazwy (dla osób\nrównież zgodność chronologiczną)\n model wskazuje kandydata lub nie"];
+    decision2 [label="8a. Ocena kandydatów przez model Gemini"];
+    decision3 [label="8b. Ocena kandydatów przez model Gemini"];
+    sources2 [label="9. Wyszukiwanie w Wikidata"];
+    sources3 [label="10. Wyszukiwanie w polskiej i angielskiej Wikipedii"];
+    result [label="11. Wynik końcowy\nTEI-XML z wyróżnieniem osób, miejsc i ich identyfikacją\nlisty encji (osób i miejsc) zidentyfikowanych\ni niezidentyfikowanych", fillcolor="#DCFCE7", color="#16A34A"];
+    pdf_after [label="12. Eksport PDF\nPlik zawiera tekst z kolorowaniem tagów, listy encji rozpoznanych i nierozpoznanych", fillcolor="#FEF3C7", color="#D97706"];
 
-    start -> settings -> recognize -> preview -> manual -> pdf_before -> identify -> sources -> decision -> result -> lists -> pdf_after -> log;
+    start -> settings -> recognize -> preview -> manual -> identify -> sources -> decision -> result -> pdf_after;
     preview -> identify [label="jeśli nie ma korekty"];
-    preview -> pdf_before [label="PDF bez identyfikacji"];
+    decision -> sources2 [label="jeżeli nieskuteczne"]
+    sources2 -> decision2
+    decision2 -> result [label="jeżeli wybrano kandydata"]
+    decision2 -> sources3 [label="jeżeli nieskuteczne"]
+    sources3 -> decision3
+    decision3 -> result
 }

@@ -210,3 +210,5 @@ prompty.txt
 opis.txt
 .codex
 jobs/*.sqlite3
+cache/*.sqlite3
+config/*.bak

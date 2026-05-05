@@ -3,9 +3,11 @@ import os
 import re
 import shutil
 import fcntl
+import sqlite3
 import threading
 import time
 from contextvars import ContextVar
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 
 import requests
@@ -57,8 +59,28 @@ WIKIDATA_COOLDOWN_STATE_PATH = os.environ.get(
     "WIKIDATA_COOLDOWN_STATE_PATH",
     "/tmp/text2ner_wikidata_cooldown.state",
 )
+WIKIBASE_ENTITY_CACHE_DB_PATH = os.environ.get(
+    "TEXT2NER_WIKIBASE_ENTITY_CACHE_DB_PATH",
+    "/tmp/text2ner_wikibase_entity_cache.sqlite3",
+)
+WIKIBASE_ENTITY_CACHE_TTL_SECONDS = int(os.environ.get(
+    "TEXT2NER_WIKIBASE_ENTITY_CACHE_TTL_SECONDS",
+    str(90 * 24 * 60 * 60),
+))
+WIKIBASE_ENTITY_CACHE_MISSING_TTL_SECONDS = int(os.environ.get(
+    "TEXT2NER_WIKIBASE_ENTITY_CACHE_MISSING_TTL_SECONDS",
+    str(24 * 60 * 60),
+))
+WIKIBASE_ENTITY_CACHE_MAX_BYTES = int(os.environ.get(
+    "TEXT2NER_WIKIBASE_ENTITY_CACHE_MAX_BYTES",
+    str(500 * 1024),
+))
+WIKIBASE_FULL_ENTITY_PROPS = "labels|descriptions|aliases|claims"
+WIKIBASE_TEXT_ENTITY_PROPS = "labels|descriptions"
 _WIKIDATA_THROTTLE_LOCK = threading.Lock()
 _LAST_WIKIDATA_REQUEST_AT = 0.0
+_WIKIBASE_ENTITY_CACHE_LOCK = threading.Lock()
+_WIKIBASE_ENTITY_CACHE_INITIALIZED_PATH = None
 
 
 WIKIBASE_SOURCES = {
@@ -330,6 +352,10 @@ DEFAULT_POLISH_PLACE_EQUIVALENTS = {
     "lucca": "Lukka",
     "luca": "Lukka",
     "missen": "Miśnia",
+    "meyssen": "Miśnia",
+    "meyssenn": "Miśnia",
+    "meissen": "Miśnia",
+    "meißen": "Miśnia",
     "missini": "Miśnia",
     "misnia": "Miśnia",
     "misnensis": "Miśnia",
@@ -351,6 +377,10 @@ DEFAULT_POLISH_PLACE_EQUIVALENTS = {
 
 PLACE_SEARCH_VARIANTS = {
     "missen": ["Meißen", "Meissen", "Miśnia"],
+    "meyssen": ["Miśnia", "Meißen", "Meissen"],
+    "meyssenn": ["Miśnia", "Meißen", "Meissen", "Meyssen"],
+    "meissen": ["Miśnia", "Meißen", "Meyssen"],
+    "meißen": ["Miśnia", "Meissen", "Meyssen"],
     "missini": ["Meißen", "Meissen", "Miśnia"],
     "misnia": ["Meißen", "Meissen", "Miśnia"],
     "misnensis": ["Meißen", "Meissen", "Miśnia"],
@@ -893,6 +923,204 @@ def get_json_response(url, params, headers, source_label):
             f"content-type={content_type}; body={preview}"
         )
     return response.json()
+
+
+def wikibase_entity_cache_enabled():
+    """Sprawdza, czy trwały cache encji Wikibase jest włączony."""
+    return bool(WIKIBASE_ENTITY_CACHE_DB_PATH) and WIKIBASE_ENTITY_CACHE_TTL_SECONDS > 0
+
+
+def normalize_wikibase_props(props):
+    """Normalizuje listę właściwości wbgetentities do stabilnego klucza cache."""
+    ordered_props = []
+    for prop in str(props or WIKIBASE_FULL_ENTITY_PROPS).split("|"):
+        prop = normalize_whitespace(prop)
+        if prop and prop not in ordered_props:
+            ordered_props.append(prop)
+    return "|".join(ordered_props) or WIKIBASE_FULL_ENTITY_PROPS
+
+
+def get_wikibase_entity_cache_connection():
+    """Otwiera połączenie z bazą SQLite trwałego cache encji Wikibase."""
+    db_path = os.path.abspath(WIKIBASE_ENTITY_CACHE_DB_PATH)
+    db_dir = os.path.dirname(db_path)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+    connection = sqlite3.connect(db_path, timeout=30)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA journal_mode=WAL")
+    connection.execute("PRAGMA busy_timeout=30000")
+    return connection
+
+
+@contextmanager
+def wikibase_entity_cache_connection():
+    """Udostępnia połączenie SQLite cache i domyka je po operacji."""
+    connection = get_wikibase_entity_cache_connection()
+    try:
+        yield connection
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def init_wikibase_entity_cache():
+    """Tworzy tabelę trwałego cache encji Wikibase, jeśli jest potrzebna."""
+    global _WIKIBASE_ENTITY_CACHE_INITIALIZED_PATH
+    if not wikibase_entity_cache_enabled():
+        return
+
+    db_path = os.path.abspath(WIKIBASE_ENTITY_CACHE_DB_PATH)
+    with _WIKIBASE_ENTITY_CACHE_LOCK:
+        if _WIKIBASE_ENTITY_CACHE_INITIALIZED_PATH == db_path:
+            return
+        should_vacuum = False
+        with wikibase_entity_cache_connection() as connection:
+            table_info = connection.execute(
+                "PRAGMA table_info(wikibase_entity_cache)"
+            ).fetchall()
+            column_names = {row["name"] for row in table_info}
+            if table_info and "props" not in column_names:
+                connection.execute("DROP TABLE IF EXISTS wikibase_entity_cache")
+                should_vacuum = True
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS wikibase_entity_cache (
+                    source TEXT NOT NULL,
+                    entity_id TEXT NOT NULL,
+                    props TEXT NOT NULL,
+                    entity_json TEXT NOT NULL,
+                    is_missing INTEGER NOT NULL DEFAULT 0,
+                    fetched_at REAL NOT NULL,
+                    PRIMARY KEY (source, entity_id, props)
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_wikibase_entity_cache_fetched_at "
+                "ON wikibase_entity_cache(fetched_at)"
+            )
+        if should_vacuum:
+            vacuum_connection = None
+            try:
+                vacuum_connection = get_wikibase_entity_cache_connection()
+                vacuum_connection.execute("VACUUM")
+                diagnostic_log(
+                    "Przebudowano schemat cache Wikibase SQLite i wykonano VACUUM."
+                )
+            except sqlite3.Error as exc:
+                diagnostic_log(
+                    f"Nie udało się wykonać VACUUM cache Wikibase SQLite: {exc}"
+                )
+            finally:
+                if vacuum_connection is not None:
+                    vacuum_connection.close()
+        _WIKIBASE_ENTITY_CACHE_INITIALIZED_PATH = db_path
+
+
+def read_wikibase_entity_cache(source, entity_ids, props):
+    """Czyta ważne wpisy trwałego cache dla podanych encji."""
+    if not wikibase_entity_cache_enabled() or not entity_ids:
+        return {}
+
+    props = normalize_wikibase_props(props)
+    try:
+        init_wikibase_entity_cache()
+        placeholders = ",".join("?" for _ in entity_ids)
+        now = time.time()
+        with wikibase_entity_cache_connection() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT entity_id, entity_json, is_missing, fetched_at
+                FROM wikibase_entity_cache
+                WHERE source = ? AND props = ? AND entity_id IN ({placeholders})
+                """,
+                [source, props] + list(entity_ids),
+            ).fetchall()
+    except sqlite3.Error as exc:
+        diagnostic_log(f"Nie udało się odczytać cache Wikibase SQLite dla {source}: {exc}")
+        return {}
+
+    cached_entities = {}
+    expired_ids = []
+    for row in rows:
+        ttl = (
+            WIKIBASE_ENTITY_CACHE_MISSING_TTL_SECONDS
+            if row["is_missing"]
+            else WIKIBASE_ENTITY_CACHE_TTL_SECONDS
+        )
+        if ttl <= 0 or now - float(row["fetched_at"]) > ttl:
+            expired_ids.append(row["entity_id"])
+            continue
+        try:
+            cached_entities[row["entity_id"]] = json.loads(row["entity_json"])
+        except json.JSONDecodeError:
+            expired_ids.append(row["entity_id"])
+
+    if expired_ids:
+        delete_wikibase_entity_cache_entries(source, expired_ids, props)
+    return cached_entities
+
+
+def write_wikibase_entity_cache(source, entities, props):
+    """Zapisuje pobrane encje do trwałego cache SQLite."""
+    if not wikibase_entity_cache_enabled() or not entities:
+        return
+
+    props = normalize_wikibase_props(props)
+    now = time.time()
+    rows = []
+    skipped_too_large = 0
+    for entity_id, entity in entities.items():
+        if not entity_id:
+            continue
+        entity_json = json.dumps(entity or {}, ensure_ascii=False, separators=(",", ":"))
+        if entity and WIKIBASE_ENTITY_CACHE_MAX_BYTES > 0 and len(entity_json.encode("utf-8")) > WIKIBASE_ENTITY_CACHE_MAX_BYTES:
+            skipped_too_large += 1
+            continue
+        rows.append((source, entity_id, props, entity_json, 0 if entity else 1, now))
+    if not rows:
+        return
+
+    try:
+        init_wikibase_entity_cache()
+        with wikibase_entity_cache_connection() as connection:
+            connection.executemany(
+                """
+                INSERT INTO wikibase_entity_cache
+                    (source, entity_id, props, entity_json, is_missing, fetched_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(source, entity_id, props) DO UPDATE SET
+                    entity_json = excluded.entity_json,
+                    is_missing = excluded.is_missing,
+                    fetched_at = excluded.fetched_at
+                """,
+                rows,
+            )
+    except sqlite3.Error as exc:
+        diagnostic_log(f"Nie udało się zapisać cache Wikibase SQLite dla {source}: {exc}")
+
+
+def delete_wikibase_entity_cache_entries(source, entity_ids, props):
+    """Usuwa przeterminowane lub uszkodzone wpisy cache encji Wikibase."""
+    if not wikibase_entity_cache_enabled() or not entity_ids:
+        return
+    props = normalize_wikibase_props(props)
+    try:
+        init_wikibase_entity_cache()
+        with wikibase_entity_cache_connection() as connection:
+            connection.executemany(
+                """
+                DELETE FROM wikibase_entity_cache
+                WHERE source = ? AND entity_id = ? AND props = ?
+                """,
+                [(source, entity_id, props) for entity_id in entity_ids],
+            )
+    except sqlite3.Error as exc:
+        diagnostic_log(f"Nie udało się usunąć wpisów cache Wikibase SQLite dla {source}: {exc}")
 
 
 def normalize_whitespace(value):
@@ -2215,14 +2443,27 @@ def validate_form_analysis(name, tag_type, analysis):
 
 
 # -------------------------- WIKIBASE FETCHING --------------------------------
-def fetch_entities_map(source_config, entity_ids):
+def fetch_entities_map(source_config, entity_ids, props=WIKIBASE_FULL_ENTITY_PROPS):
     """Pobiera encje (Q/P) z cache lub przez wbgetentities."""
+    props = normalize_wikibase_props(props)
     entity_ids = [entity_id for entity_id in dict.fromkeys(entity_ids) if entity_id]
     if not entity_ids:
         return {}
 
     source = source_config["source"]
-    missing_ids = [entity_id for entity_id in entity_ids if (source, entity_id) not in ENTITY_CACHE]
+    memory_cache_key = lambda entity_id: (source, entity_id, props)
+    memory_missing_ids = [
+        entity_id for entity_id in entity_ids
+        if memory_cache_key(entity_id) not in ENTITY_CACHE
+    ]
+    sqlite_cached_entities = read_wikibase_entity_cache(source, memory_missing_ids, props)
+    for entity_id, entity in sqlite_cached_entities.items():
+        ENTITY_CACHE[memory_cache_key(entity_id)] = entity
+
+    missing_ids = [
+        entity_id for entity_id in entity_ids
+        if memory_cache_key(entity_id) not in ENTITY_CACHE
+    ]
     headers = wikimedia_headers(f"{source} entity fetching")
 
     for offset in range(0, len(missing_ids), 40):
@@ -2232,17 +2473,22 @@ def fetch_entities_map(source_config, entity_ids):
             "ids": "|".join(batch),
             "languages": "|".join(PREFERRED_WIKIBASE_LANGUAGES),
             "format": "json",
-            "props": "labels|descriptions|aliases|claims",
+            "props": props,
         }
         response = get_json_response(source_config["api_url"], params, headers, source)
         entities = response.get("entities", {})
+        fetched_entities = {}
         for entity_id in batch:
-            ENTITY_CACHE[(source, entity_id)] = entities.get(entity_id, {})
+            entity = entities.get(entity_id, {})
+            ENTITY_CACHE[memory_cache_key(entity_id)] = entity
+            fetched_entities[entity_id] = entity
+        write_wikibase_entity_cache(source, fetched_entities, props)
 
-    return {
-        entity_id: ENTITY_CACHE.get((source, entity_id), {})
+    result = {
+        entity_id: ENTITY_CACHE.get(memory_cache_key(entity_id), {})
         for entity_id in entity_ids
     }
+    return result
 
 
 def fetch_wikidata_sitelinks(entity_ids):
@@ -2655,7 +2901,11 @@ def build_candidate_from_entity(source_config, entity_id, entity, property_entit
     aliases_map = build_alias_map(entity.get("aliases", {}))
 
     instance_of_ids = extract_entity_id_values(entity.get("claims", {}), source_config["instance_of_property"])
-    instance_of_entities = fetch_entities_map(source_config, instance_of_ids)
+    instance_of_entities = fetch_entities_map(
+        source_config,
+        instance_of_ids,
+        props=WIKIBASE_TEXT_ENTITY_PROPS,
+    )
     instance_of_texts = []
     for class_id in instance_of_ids:
         class_entity = instance_of_entities.get(class_id, {})
@@ -2699,6 +2949,7 @@ def build_candidate_from_entity(source_config, entity_id, entity, property_entit
 
 def build_candidates_from_entity_ids(source_config, entity_ids):
     """Pobiera encje i zamienia ich identyfikatory na kandydatów do wyboru."""
+    entity_ids = [entity_id for entity_id in dict.fromkeys(entity_ids) if entity_id]
     entities_map = fetch_entities_map(source_config, entity_ids)
     priority_property_ids = tuple(source_config.get("priority_claim_property_ids", ()))
     property_ids = []
@@ -2712,8 +2963,16 @@ def build_candidates_from_entity_ids(source_config, entity_ids):
 
     property_ids = list(dict.fromkeys(property_ids))
     referenced_ids = list(dict.fromkeys(referenced_ids))
-    property_entities = fetch_entities_map(source_config, property_ids[:60])
-    referenced_entities = fetch_entities_map(source_config, referenced_ids[:80])
+    property_entities = fetch_entities_map(
+        source_config,
+        property_ids[:60],
+        props=WIKIBASE_TEXT_ENTITY_PROPS,
+    )
+    referenced_entities = fetch_entities_map(
+        source_config,
+        referenced_ids[:80],
+        props=WIKIBASE_TEXT_ENTITY_PROPS,
+    )
 
     candidates = []
     for entity_id in entity_ids:
@@ -2834,6 +3093,10 @@ def expand_office_terms(office_terms):
     replacements = {
         "cardinalis": ["kardynał", "kardynal", "cardinal"],
         "episcopus": ["biskup", "bishop", "Bischof"],
+        "bishop": ["biskup", "episcopus", "Bischof"],
+        "biskup": ["bishop", "episcopus", "Bischof"],
+        "bischof": ["biskup", "bishop", "episcopus"],
+        "bischoff": ["biskup", "bishop", "episcopus", "Bischof"],
         "archiepiscopus": ["arcybiskup", "archbishop", "Erzbischof"],
         "rex": ["król", "krol", "king"],
         "regina": ["królowa", "krolowa", "queen"],
@@ -2881,15 +3144,15 @@ def expand_place_terms(place_terms):
 
         expanded_variants = []
         for variant in variants:
-            expanded_variants.append(variant)
             normalized_variant = normalize_for_lookup(variant)
-            expanded_variants.extend(PLACE_SEARCH_VARIANTS.get(normalized_variant, []))
             polish_equivalent = get_polish_equivalent(variant, "placeName")
             if polish_equivalent:
                 expanded_variants.append(polish_equivalent)
                 expanded_variants.extend(
                     PLACE_SEARCH_VARIANTS.get(normalize_for_lookup(polish_equivalent), [])
                 )
+            expanded_variants.extend(PLACE_SEARCH_VARIANTS.get(normalized_variant, []))
+            expanded_variants.append(variant)
             adjectival_equivalent = get_polish_place_adjectival_equivalent(variant)
             if adjectival_equivalent:
                 expanded_variants.append(adjectival_equivalent)
@@ -3710,8 +3973,10 @@ def build_query_plan(entity_analysis):
             return 0
         if any(marker in value for marker in ("cardinalis", "cardinal", "kardynal", "kardynał")):
             return 1
-        if any(marker in value for marker in ("episcopus", "bishop", "biskup")):
+        if "biskup" in value:
             return 2
+        if any(marker in value for marker in ("episcopus", "bishop", "biskup")):
+            return 3
         return 3
 
     def has_confident_person_lemma():
@@ -4907,12 +5172,13 @@ def link_entity(name, context, tag_type, document_years=None):
             f"powód={wikipedia_fallback_reason}."
         )
 
+    candidate_suggestions = build_candidate_suggestions(suggestion_candidates, entity_analysis)
     return {
         "entity_analysis": entity_analysis,
         "normalized_name": normalized_name,
         "query_plan": queries,
         "candidates": candidates,
-        "candidate_suggestions": build_candidate_suggestions(suggestion_candidates, entity_analysis),
+        "candidate_suggestions": candidate_suggestions,
         "decision": decision,
     }
 

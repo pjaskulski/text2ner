@@ -1,3 +1,4 @@
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -38,6 +39,80 @@ class AugustinoIdentificationSignalsTest(unittest.TestCase):
             "CustomAgent/2.0 (https://example.test/contact) requests",
         )
         self.assertEqual(headers["Accept"], "application/json")
+
+    def test_fetch_entities_map_reuses_sqlite_cache_after_memory_cache_is_cleared(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = f"{temp_dir}/wikibase-cache.sqlite3"
+            source_config = names_linking.WIKIBASE_SOURCES["WikiHum"]
+            response_payload = {
+                "entities": {
+                    "Q123": {
+                        "labels": {"pl": {"language": "pl", "value": "Test"}},
+                        "descriptions": {},
+                        "aliases": {},
+                        "claims": {},
+                    }
+                }
+            }
+
+            with patch.object(names_linking, "WIKIBASE_ENTITY_CACHE_DB_PATH", db_path), \
+                    patch.object(names_linking, "WIKIBASE_ENTITY_CACHE_TTL_SECONDS", 3600), \
+                    patch.object(names_linking, "WIKIBASE_ENTITY_CACHE_MISSING_TTL_SECONDS", 3600), \
+                    patch.object(names_linking, "_WIKIBASE_ENTITY_CACHE_INITIALIZED_PATH", None), \
+                    patch.object(names_linking, "get_json_response", return_value=response_payload) as get_json:
+                names_linking.ENTITY_CACHE.clear()
+                first = names_linking.fetch_entities_map(source_config, ["Q123"])
+                names_linking.ENTITY_CACHE.clear()
+                second = names_linking.fetch_entities_map(source_config, ["Q123"])
+
+            self.assertEqual(first, second)
+            self.assertEqual(first["Q123"]["labels"]["pl"]["value"], "Test")
+            get_json.assert_called_once()
+
+    def test_fetch_entities_map_keeps_sqlite_cache_separate_by_props(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = f"{temp_dir}/wikibase-cache.sqlite3"
+            source_config = names_linking.WIKIBASE_SOURCES["WikiHum"]
+            full_response = {
+                "entities": {
+                    "Q123": {
+                        "labels": {"pl": {"language": "pl", "value": "Test"}},
+                        "descriptions": {},
+                        "aliases": {"pl": [{"language": "pl", "value": "Alias"}]},
+                        "claims": {"P1": []},
+                    }
+                }
+            }
+            text_response = {
+                "entities": {
+                    "Q123": {
+                        "labels": {"pl": {"language": "pl", "value": "Test"}},
+                        "descriptions": {},
+                    }
+                }
+            }
+
+            with patch.object(names_linking, "WIKIBASE_ENTITY_CACHE_DB_PATH", db_path), \
+                    patch.object(names_linking, "WIKIBASE_ENTITY_CACHE_TTL_SECONDS", 3600), \
+                    patch.object(names_linking, "WIKIBASE_ENTITY_CACHE_MISSING_TTL_SECONDS", 3600), \
+                    patch.object(names_linking, "_WIKIBASE_ENTITY_CACHE_INITIALIZED_PATH", None), \
+                    patch.object(
+                        names_linking,
+                        "get_json_response",
+                        side_effect=[full_response, text_response],
+                    ) as get_json:
+                names_linking.ENTITY_CACHE.clear()
+                full = names_linking.fetch_entities_map(source_config, ["Q123"])
+                names_linking.ENTITY_CACHE.clear()
+                text = names_linking.fetch_entities_map(
+                    source_config,
+                    ["Q123"],
+                    props=names_linking.WIKIBASE_TEXT_ENTITY_PROPS,
+                )
+
+            self.assertIn("claims", full["Q123"])
+            self.assertNotIn("claims", text["Q123"])
+            self.assertEqual(get_json.call_count, 2)
 
     def test_analyze_form_logs_raw_response_when_gemini_returns_invalid_json(self):
         class FakeResponse:
@@ -129,6 +204,25 @@ class AugustinoIdentificationSignalsTest(unittest.TestCase):
         self.assertIn("Petrus Strelicz", queries)
         self.assertIn("Piotr Strelicz", queries)
         self.assertIn("Strelicz", queries)
+
+    def test_query_plan_expands_german_bishop_and_meyssen_terms(self):
+        entity_analysis = {
+            "surface": "Johannes",
+            "tag_type": "persName",
+            "normalized_best": "Johannes",
+            "confidence_form": "high",
+            "lemma_candidates": ["Johannes", "Jan", "Johann"],
+            "surface_variants": ["Johannes", "Johann", "Jan"],
+            "office_terms": ["Bischoff"],
+            "place_terms": ["Meyssen"],
+        }
+
+        queries = names_linking.build_query_plan(entity_analysis)
+
+        self.assertIn("Johannes biskup", queries)
+        self.assertIn("Johannes bishop", queries)
+        self.assertIn("Johannes Miśnia", queries)
+        self.assertIn("Johannes biskup Miśnia", queries)
 
     def test_query_plan_prefers_confident_person_lemma_over_inflected_surface(self):
         entity_analysis = {
