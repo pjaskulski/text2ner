@@ -7,8 +7,8 @@ import names_linking
 
 
 class AugustinoIdentificationSignalsTest(unittest.TestCase):
-    def test_default_wikidata_request_interval_is_three_seconds(self):
-        self.assertEqual(names_linking.WIKIDATA_REQUEST_INTERVAL_SECONDS, 3.0)
+    def test_default_wikidata_request_interval_is_one_and_half_seconds(self):
+        self.assertEqual(names_linking.WIKIDATA_REQUEST_INTERVAL_SECONDS, 1.5)
 
     def test_wikimedia_user_agent_uses_configured_contact(self):
         with patch.object(names_linking, "WIKIMEDIA_USER_AGENT", ""), \

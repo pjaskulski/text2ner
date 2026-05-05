@@ -295,7 +295,7 @@ Domyślne ścieżki i czasy przechowywania można zmienić zmiennymi środowisko
 - `TEXT2NER_IDENTIFY_JOB_RETENTION_SECONDS` - czas przechowywania zakończonych zadań, domyślnie 48 godzin,
 - `TEXT2NER_IDENTIFY_JOB_STALE_RUNNING_SECONDS` - czas po którym niedokończone zadanie `running` uznawane jest za przerwane, domyślnie 1 godzina,
 - `TEXT2NER_IDENTIFY_WORKER_POLL_SECONDS` - odstęp odpytywania kolejki przez worker, domyślnie 1 sekunda,
-- `WIKIDATA_REQUEST_INTERVAL_SECONDS` - minimalny odstęp między zapytaniami do Wikidaty, domyślnie 3 sekundy,
+- `WIKIDATA_REQUEST_INTERVAL_SECONDS` - minimalny odstęp między zapytaniami do Wikidaty, domyślnie 1,5 sekundy,
 - `WIKIDATA_MAX_SEARCH_QUERIES` - maksymalna liczba zapytań wyszukiwawczych do Wikidaty dla jednej encji, domyślnie 12,
 - `WIKIMEDIA_USER_AGENT_CONTACT` - kontakt do operatora aplikacji używany w nagłówku `User-Agent` dla Wikipedii i Wikidaty; powinien zawierać adres e-mail, URL kontaktowy albo konto użytkownika Wikimedia,
 - `WIKIMEDIA_USER_AGENT` - opcjonalne pełne nadpisanie nagłówka `User-Agent`, jeśli trzeba użyć własnego formatu,
