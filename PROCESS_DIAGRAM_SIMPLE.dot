@@ -2,7 +2,7 @@ digraph text2ner_process_simple {
     graph [
         rankdir=TB,
         labelloc="t",
-        label="TEXT2NER: uproszczony przebieg pracy aplikacji",
+        label="TEXT2NER: uproszczony przebieg pracy aplikacji\n\n",
         fontsize=20,
         fontname="Helvetica",
         pad=0.3,
@@ -34,17 +34,18 @@ digraph text2ner_process_simple {
     recognize [label="3. Funkcja Rozpoznaj \nAplikacja oznacza osoby, miejsca,\ndaty, funkcje i instytucje (tagi zależnie od ustawień)\n tworzy zapis w formacie TEI-XML"];
     preview [label="4. Użytkownik może obejrzeć XML\nlub kolorowany podgląd tekstu"];
     manual [label="5. Podgląd umożliwia korektę tagów\nMożna usunąć tag,\nzmienić jego typ albo dodać nowy"];
-    identify [label="6. Rozpoznane encje typu persName lub placeName\n można zidentyfikować w bazach referencyjnych\nAplikacja określa formę podstawową nazwy,\n analizuje kontekst wystąpienia encji\n (np. informacje o urzędzie, funkcji dla osoby,\n lub infromacje lokalizacyjne dla miejsc)"];
-    sources [label="7. Wyszukiwanie kandydatów\nw WikiHum i va.wiki.kul.pl"];
+    identify [label="6. Rozpoznane encje typu persName lub placeName\n można zidentyfikować w bazach referencyjnych\nModel określa formę podstawową nazwy,\ndodatkowe słowniki pomagają przy utworzeniu polskich wersji nazw\n w przypadku tekstów łacińskich i niemieckich\n model analizuje kontekst wystąpienia encji\n (np. informacje o urzędzie, funkcji dla osoby,\n lub informacje lokalizacyjne dla miejsc)"];
+    identify2 [label="6a. Przygotowywany jest plan zapytań do instancji wikibase\n zapytanie oprócz nazwy osoby może zawierać \n dane ujednoznaczniające np. tytuł, urząd itp."];
+    sources [label="7. Wyszukiwanie kandydatów\nw WikiHum i va.wiki.kul.pl\n(wyszukiwanie przybliżone poprzez Special:Search)"];
     decision [label="8. Ocena kandydatów\nModel Gemini porównuje kontekst,\nwarianty nazwy (dla osób\nrównież zgodność chronologiczną)\n model wskazuje kandydata lub nie"];
-    decision2 [label="8a. Ocena kandydatów przez model Gemini"];
-    decision3 [label="8b. Ocena kandydatów przez model Gemini"];
+    decision2 [label="8a. Ocena kandydatów z wikidata przez model Gemini"];
+    decision3 [label="8b. Ocena kandydatów z wikipedii przez model Gemini"];
     sources2 [label="9. Wyszukiwanie w Wikidata"];
     sources3 [label="10. Wyszukiwanie w polskiej i angielskiej Wikipedii"];
     result [label="11. Wynik końcowy\nTEI-XML z wyróżnieniem osób, miejsc i ich identyfikacją\nlisty encji (osób i miejsc) zidentyfikowanych\ni niezidentyfikowanych", fillcolor="#DCFCE7", color="#16A34A"];
     pdf_after [label="12. Eksport PDF\nPlik zawiera tekst z kolorowaniem tagów, listy encji rozpoznanych i nierozpoznanych", fillcolor="#FEF3C7", color="#D97706"];
 
-    start -> settings -> recognize -> preview -> manual -> identify -> sources -> decision -> result -> pdf_after;
+    start -> settings -> recognize -> preview -> manual -> identify -> identify2 -> sources -> decision -> result -> pdf_after;
     preview -> identify [label="jeśli nie ma korekty"];
     decision -> sources2 [label="jeżeli nieskuteczne"]
     sources2 -> decision2
